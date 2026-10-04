@@ -1,0 +1,26 @@
+# Secrets / Umgebungsvariablen – NIEMALS committen
+.env
+.env.*
+*.key
+secrets.*
+# Ausnahme: die Vorlage SOLL versioniert werden
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
