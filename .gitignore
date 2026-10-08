@@ -23,4 +23,8 @@ env/
 .vscode/
 .idea/
 .DS_Store
-*.swp
+*.swp	
+
+.env
+chroma_db/
+__pycache__/
