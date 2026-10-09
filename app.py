@@ -74,7 +74,7 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
         system_prompt = "Du bist ein professioneller Kundenservice-Agent. Antworte auf Deutsch. KEIN Markdown (**), KEINE Betreffzeile. Erfinde NIEMALS Namen; nutze bei unbekannten Namen 'Sehr geehrte Damen und Herren'."
         temperatur = 0.1
     elif is_extraction:
-        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON-Format zurück, ohne zusätzlichen Text."
+        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON-Format zurück, ohne zusätzlichen Text. Das Format muss mit { beginnen und mit } enden."
         temperatur = 0.0
     else:
         system_prompt = "Du bist der intelligente KI-Berater von RESOLV.AI. Antworte professionell und auf Deutsch. Du darfst Markdown nutzen."
@@ -276,14 +276,22 @@ elif st.session_state.aktive_seite == "Extraktion":
                     prompt = f"Lies den folgenden Text und extrahiere diese Informationen: {gesuchte_daten}. Antworte ausschließlich in einem sauberen JSON-Format, wobei die gesuchten Daten die Schlüssel sind. Text:\n\n{text[:3000]}"
                     antwort_json_string = generiere_antwort(prompt, is_extraction=True)
                     
+                    # --- DER FIX: Störende Zeichen der KI abschneiden ---
+                    antwort_json_string = antwort_json_string.replace("```json", "").replace("```", "").strip()
+                    
                     try:
                         daten_dict = json.loads(antwort_json_string)
-                        df = pd.DataFrame([daten_dict])
+                        # Falls die KI eine Liste zurückgibt statt eines normalen Blocks:
+                        if isinstance(daten_dict, list):
+                            df = pd.DataFrame(daten_dict)
+                        else:
+                            df = pd.DataFrame([daten_dict])
+                            
                         st.session_state.extrahierte_daten = df
                         st.session_state.extraktionen += 1
                         st.success("Erfolgreich extrahiert!")
                     except json.JSONDecodeError:
-                        st.error("Die KI konnte kein gültiges Tabellenformat generieren. Bitte versuche es erneut.")
+                        st.error(f"Die KI hat ein unbekanntes Format geliefert. Hier ist der Rohtext:\n\n{antwort_json_string}")
                 else:
                     st.error("Das Dokument enthält keinen lesbaren Text.")
             except Exception as e:
