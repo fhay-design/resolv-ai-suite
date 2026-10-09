@@ -13,6 +13,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pandas as pd
 import json
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- 1. SETUP ---
 st.set_page_config(page_title="RESOLV.AI Enterprise", page_icon="⚡", layout="wide")
@@ -26,8 +28,14 @@ smtp_server = os.getenv("SMTP_SERVER")
 smtp_port = int(os.getenv("SMTP_PORT", 587))
 app_password = os.getenv("APP_PASSWORD")
 
+# Google Credentials laden (Aus Secrets)
+try:
+    google_json_str = st.secrets.get("GOOGLE_CREDENTIALS_JSON")
+except:
+    google_json_str = None
+
 if not api_key or not app_password:
-    st.error("🚨 Kritischer Fehler: .env Datei nicht vollständig!")
+    st.error("🚨 Kritischer Fehler: .env Datei (oder Secrets) nicht vollständig!")
     st.stop()
 
 # --- SESSION STATES ---
@@ -65,11 +73,10 @@ collection = init_db()
 
 def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     if history is None: history = []
-    
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
     if mode == "email":
-        system_prompt = "Du bist ein professioneller Customer Success Manager. Antworte in perfektem Deutsch als fließender Text. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#). Schreibe wie in einer ganz normalen E-Mail."
+        system_prompt = "Du bist ein professioneller Customer Success Manager. Antworte in perfektem Deutsch als fließender Text. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#)."
         temp = 0.2
     elif mode == "extract":
         system_prompt = "Du bist ein präziser API-Datenextraktor. Gib AUSSCHLIESSLICH reines JSON zurück. Keine Erklärungen, kein Markdown vor oder nach dem JSON."
@@ -92,15 +99,12 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
         try:
             res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
             antwort_text = res.choices[0].message.content
-            
             if mode == "email":
                 antwort_text = antwort_text.replace("**", "").replace("*", "").replace("###", "").replace("##", "")
-                
             return antwort_text
         except Exception as e:
             fehler_log.append(f"{model}: {e}")
             continue
-            
     return f"🚨 Systemausfall. Log: {fehler_log}"
 
 # --- E-Mail Funktionen ---
@@ -154,8 +158,6 @@ with st.sidebar:
 
 if st.session_state.aktive_seite == "Dashboard":
     st.title("Unternehmens-Übersicht")
-    
-    # FIX: Gamification & ROI zurückgeholt
     eingesparte_zeit = (st.session_state.stats["mails"] * 5) + (st.session_state.stats["extraktionen"] * 10) + (st.session_state.stats["content"] * 15)
     
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -194,20 +196,15 @@ elif st.session_state.aktive_seite == "Email":
             
     for mail in st.session_state.posteingang:
         m_id = mail['id']
-        # FIX: Das Fenster prüft, ob es einen Entwurf gibt. Wenn ja, bleibt es OFFEN!
         ist_offen = m_id in st.session_state.entwuerfe
-        
         with st.expander(f"📥 {mail['betreff']} | Von: {mail['absender']}", expanded=ist_offen):
             st.write(mail['text'])
-            
             if st.button("KI-Antwort generieren", key=f"btn_{m_id}"):
                 with st.spinner("Analysiere & Formuliere..."):
                     docs = collection.query(query_texts=[mail['text']], n_results=2)
                     ctx = "\n".join(docs['documents'][0]) if docs['documents'] else ""
                     st.session_state.entwuerfe[m_id] = generiere_antwort(f"Antworte auf: {mail['text']}", kontext=ctx, mode="email")
-                    # FIX: Zwingt die Seite zum Neuladen, damit das Textfeld sofort erscheint
                     st.rerun() 
-                    
             if m_id in st.session_state.entwuerfe:
                 entwurf = st.text_area("Entwurf:", value=st.session_state.entwuerfe[m_id], height=200, key=f"txt_{m_id}")
                 if st.button("Senden", type="primary", key=f"snd_{m_id}"):
@@ -218,9 +215,9 @@ elif st.session_state.aktive_seite == "Email":
 
 elif st.session_state.aktive_seite == "Extraktion":
     st.title("📑 Strukturierte Datenextraktion")
-    st.write("Wandelt unstrukturierte PDF-Dokumente in saubere Datenbank-Tabellen um.")
+    st.write("Wandelt unstrukturierte PDF-Dokumente (z.B. Materialrechnungen, Lieferscheine) in saubere Datenbank-Tabellen um.")
     
-    ziele = st.text_input("Ziel-Attribute (z.B. Rechnungsnummer, Datum, Netto, Brutto):", "Firma, Rechnungsnummer, Gesamtbetrag")
+    ziele = st.text_input("Ziel-Attribute (z.B. Firma, Rechnungsnummer, Datum, Netto):", "Firma, Rechnungsnummer, Gesamtbetrag")
     upload = st.file_uploader("Dokument hochladen", type="pdf")
     
     if st.button("Dokument parsen", type="primary") and upload:
@@ -238,14 +235,44 @@ elif st.session_state.aktive_seite == "Extraktion":
                         st.session_state.extrahierte_daten = df
                         st.session_state.stats["extraktionen"] += 1
                     except json.JSONDecodeError:
-                        st.error("JSON Parsing fehlgeschlagen. Rohtext:")
-                        st.code(raw_antwort)
+                        st.error("JSON Parsing fehlgeschlagen.")
             except Exception as e: st.error(f"Fehler: {e}")
             
     if st.session_state.extrahierte_daten is not None:
         st.dataframe(st.session_state.extrahierte_daten, use_container_width=True)
+        
+        col_csv, col_sheet = st.columns(2)
         csv = st.session_state.extrahierte_daten.to_csv(index=False).encode('utf-8')
-        st.download_button("Als CSV exportieren", csv, "extrakt.csv", "text/csv")
+        col_csv.download_button("💾 Als CSV exportieren", csv, "extrakt.csv", "text/csv")
+        
+        # DER GOOGLE SHEETS AUTOMATISIERUNGS-BUTTON
+        if col_sheet.button("🚀 Live in Google Sheets eintragen", type="primary"):
+            if not google_json_str:
+                st.error("🚨 Der Google API Schlüssel in den Secrets fehlt oder ist fehlerhaft.")
+            else:
+                with st.spinner("Verbinde mit Google Cloud..."):
+                    try:
+                        creds_dict = json.loads(google_json_str)
+                        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+                        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+                        gc = gspread.authorize(creds)
+                        
+                        # Die freigegebene Tabelle öffnen
+                        sh = gc.open("RESOLV_Datenbank").sheet1
+                        df_to_save = st.session_state.extrahierte_daten.fillna("")
+                        
+                        # Kopfzeilen anhängen, falls Tabelle komplett leer ist
+                        if not sh.get_all_values():
+                            sh.append_row(df_to_save.columns.tolist())
+                            
+                        # Die eigentlichen Daten anhängen
+                        daten_liste = df_to_save.values.tolist()
+                        for zeile in daten_liste:
+                            sh.append_row([str(val) for val in zeile])
+                            
+                        st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
+                    except Exception as e:
+                        st.error(f"Verbindungsfehler zur Tabelle: {e}")
 
 elif st.session_state.aktive_seite == "Wissen":
     st.title("📚 RAG Wissensdatenbank")
