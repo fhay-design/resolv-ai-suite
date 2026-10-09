@@ -257,29 +257,26 @@ elif st.session_state.aktive_seite == "Extraktion":
                         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
                         gc = gspread.authorize(creds)
                         
-                        sh = gc.open("RESOLV_Datenbank").sheet1
+                        # BULLETPROOF: Wir nutzen die ID aus deiner URL, der Name ist jetzt völlig egal!
+                        sh = gc.open_by_key("1PmPtL_ymo-5I1biksIJHlJj34TFiCYVzBUEUCWgh-GE").sheet1
                         df_to_save = st.session_state.extrahierte_daten.fillna("")
                         
-                        if not sh.get_all_values():
-                            sh.append_row(df_to_save.columns.tolist())
-                            
-                        daten_liste = df_to_save.values.tolist()
-                        string_daten = [[str(val) for val in zeile] for zeile in daten_liste]
+                        # Daten in Listen-Format umwandeln
+                        string_daten = [[str(val) for val in zeile] for zeile in df_to_save.values.tolist()]
                         
-                        try:
-                            sh.append_rows(string_daten)
-                            st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
-                        except Exception as inner_e:
-                            if "200" in str(inner_e):
-                                st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
-                            else:
-                                raise inner_e
-                                
-                    except Exception as e:
-                        if "200" in str(e):
-                            st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
+                        # Stabilster Schreib-Befehl (ohne append)
+                        existing_data = sh.get_all_values()
+                        if not existing_data:
+                            # Tabelle ist leer -> A1 bis Ende beschreiben (inklusive Kopfzeile)
+                            sh.update('A1', [df_to_save.columns.tolist()] + string_daten)
                         else:
-                            st.error(f"Verbindungsfehler zur Tabelle: {e}")
+                            # Tabelle hat schon Daten -> Unten dranhängen
+                            naechste_zeile = len(existing_data) + 1
+                            sh.update(f'A{naechste_zeile}', string_daten)
+                            
+                        st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
+                    except Exception as e:
+                        st.error(f"Verbindungsfehler zur Tabelle: {e}")
 
 elif st.session_state.aktive_seite == "Wissen":
     st.title("📚 RAG Wissensdatenbank")
