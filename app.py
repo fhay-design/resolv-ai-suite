@@ -27,7 +27,7 @@ smtp_port = int(os.getenv("SMTP_PORT", 587))
 app_password = os.getenv("APP_PASSWORD")
 
 if not api_key or not app_password:
-    st.error("🚨 Kritischer Fehler: .env Datei nicht vollständig!")
+    st.error("🚨 Kritischer Fehler: .env Datei nicht vollständig! Bitte GROQ_API_KEY und APP_PASSWORD prüfen.")
     st.stop()
 
 # Session States
@@ -68,7 +68,7 @@ collection = init_db()
 # --- 4. ENGINE ---
 def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extraction=False):
     if history is None: history = []
-    fallback_modelle = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
+    fallback_modelle = ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
     
     if is_email:
         system_prompt = "Du bist ein professioneller Kundenservice-Agent. Antworte auf Deutsch. KEIN Markdown (**), KEINE Betreffzeile. Erfinde NIEMALS Namen; nutze bei unbekannten Namen 'Sehr geehrte Damen und Herren'."
@@ -94,7 +94,7 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
             )
             return response.choices[0].message.content
         except: continue
-    return "🚨 Systemfehler."
+    return "🚨 Systemfehler. Kein Groq-Modell erreichbar."
 
 # --- 5. E-MAIL PIPELINES ---
 def lese_letzte_emails(limit=3):
@@ -294,4 +294,4 @@ elif st.session_state.aktive_seite == "Extraktion":
         st.dataframe(st.session_state.extrahierte_daten, use_container_width=True)
         
         csv = st.session_state.extrahierte_daten.to_csv(index=False).encode('utf-8')
-        st.download_button(label="💾 Als CSV herunterladen", data=csv, file_name=f"extrahierte_daten.csv", mime="text/csv")
+        st.download_button(label="💾 Als CSV herunterladen", data=csv, file_name=f"extrahierte_daten.csv", mime="text/csv") 
