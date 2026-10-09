@@ -68,14 +68,14 @@ collection = init_db()
 # --- 4. ENGINE ---
 def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extraction=False):
     if history is None: history = []
-    # UNZERSTÖRBAR: Ausschließlich verifizierte, aktuell laufende Modelle
-    fallback_modelle = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192", "llama3-70b-8192"]
+    # ABSOLUT SAUBER: Nur noch die 3 aktuellsten, stabilsten Modelle. Keine "Leichen" mehr.
+    fallback_modelle = ["llama-3.1-8b-instant", "llama-3.1-70b-versatile", "gemma2-9b-it"]
     
     if is_email:
         system_prompt = "Du bist ein professioneller Kundenservice-Agent. Antworte auf Deutsch. KEIN Markdown (**), KEINE Betreffzeile. Erfinde NIEMALS Namen; nutze bei unbekannten Namen 'Sehr geehrte Damen und Herren'."
         temperatur = 0.1
     elif is_extraction:
-        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON zurück. Nutze keine Einleitung. Beginne direkt mit { und beende mit }."
+        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON zurück. Beginne direkt mit { und beende mit }."
         temperatur = 0.0
     else:
         system_prompt = "Du bist der intelligente KI-Berater von RESOLV.AI. Antworte professionell und auf Deutsch. Du darfst Markdown nutzen."
@@ -87,19 +87,21 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
     for msg in history[-6:]: api_messages.append({"role": msg["role"], "content": msg["content"]})
     api_messages.append({"role": "user", "content": prompt})
 
-    letzter_fehler = ""
+    gesammelte_fehler = []
     for model_name in fallback_modelle:
         try:
-            # Wir verlassen uns auf den starken System-Prompt, nicht auf technische kwargs, um Abstürze zu vermeiden
             response = client.chat.completions.create(
                 model=model_name, messages=api_messages, temperature=temperatur, max_tokens=2000
             )
             return response.choices[0].message.content
         except Exception as e: 
-            letzter_fehler = str(e)
+            # Hier sammeln wir nun jeden einzelnen Fehler, falls ein Modell meckert
+            gesammelte_fehler.append(f"[{model_name} gescheitert]: {str(e)}")
             continue
             
-    return f"🚨 Systemfehler. Kein Modell erreichbar. Letzter Fehler: {letzter_fehler}"
+    # Falls wirklich alles brennt, zeigen wir das komplette Fehler-Protokoll an
+    fehler_text = "\n".join(gesammelte_fehler)
+    return f"🚨 Systemfehler. Kein Modell erreichbar. Details:\n{fehler_text}"
 
 # --- 5. E-MAIL PIPELINES ---
 def lese_letzte_emails(limit=3):
@@ -281,6 +283,7 @@ elif st.session_state.aktive_seite == "Extraktion":
                     prompt = f"Lies den folgenden Text und extrahiere diese Informationen: {gesuchte_daten}. Antworte ausschließlich in einem sauberen JSON-Format, wobei die gesuchten Daten die Schlüssel sind. Text:\n\n{text[:3000]}"
                     antwort_json_string = generiere_antwort(prompt, is_extraction=True)
                     
+                    # Markdown-Formatierungen der KI automatisch entfernen
                     antwort_json_string = antwort_json_string.replace("```json", "").replace("```", "").strip()
                     
                     try:
