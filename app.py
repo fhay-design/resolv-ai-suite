@@ -15,7 +15,6 @@ import pandas as pd
 import json
 
 # --- 1. SETUP ---
-# Custom CSS entfernt für das saubere, stabile Standard-Layout
 st.set_page_config(page_title="RESOLV.AI Enterprise", page_icon="⚡", layout="wide")
 
 load_dotenv()
@@ -55,7 +54,7 @@ if not st.session_state.logged_in:
             else: st.error("Zugriff verweigert.")
     st.stop()
 
-# --- 3. CORE ENGINE (Bulletproof LLM) ---
+# --- 3. CORE ENGINE ---
 client = Groq(api_key=api_key)
 
 @st.cache_resource
@@ -94,7 +93,6 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
             res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
             antwort_text = res.choices[0].message.content
             
-            # DER FIX FÜR E-MAILS: Wir löschen die Markdown-Sterne mit Gewalt aus dem Text
             if mode == "email":
                 antwort_text = antwort_text.replace("**", "").replace("*", "").replace("###", "").replace("##", "")
                 
@@ -151,15 +149,21 @@ with st.sidebar:
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.caption("System Status: 🟢 Online\n\nModelle: GPT-OSS / Qwen")
 
+
 # --- 5. SEITEN LOGIK ---
 
 if st.session_state.aktive_seite == "Dashboard":
     st.title("Unternehmens-Übersicht")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Wissensdatenbank", f"{collection.count()} Docs")
-    c2.metric("Mails automatisiert", st.session_state.stats["mails"])
-    c3.metric("Daten extrahiert", st.session_state.stats["extraktionen"])
-    c4.metric("Content erstellt", st.session_state.stats["content"])
+    
+    # FIX: Gamification & ROI zurückgeholt
+    eingesparte_zeit = (st.session_state.stats["mails"] * 5) + (st.session_state.stats["extraktionen"] * 10) + (st.session_state.stats["content"] * 15)
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Wissen", f"{collection.count()} Docs", delta="In Datenbank")
+    c2.metric("Mails", st.session_state.stats["mails"], delta=f"+{st.session_state.stats['mails']}" if st.session_state.stats['mails']>0 else "")
+    c3.metric("Tabellen", st.session_state.stats["extraktionen"], delta=f"+{st.session_state.stats['extraktionen']}" if st.session_state.stats['extraktionen']>0 else "")
+    c4.metric("Content", st.session_state.stats["content"], delta=f"+{st.session_state.stats['content']}" if st.session_state.stats['content']>0 else "")
+    c5.metric("ROI", f"{eingesparte_zeit} Min.", delta="Gespart" if eingesparte_zeit > 0 else "")
     
     st.markdown("---")
     st.subheader("💬 RESOLV.AI Core Chat")
@@ -189,14 +193,21 @@ elif st.session_state.aktive_seite == "Email":
             else: st.session_state.posteingang = res; st.success("Postfach aktuell.")
             
     for mail in st.session_state.posteingang:
-        with st.expander(f"📥 {mail['betreff']} | Von: {mail['absender']}"):
+        m_id = mail['id']
+        # FIX: Das Fenster prüft, ob es einen Entwurf gibt. Wenn ja, bleibt es OFFEN!
+        ist_offen = m_id in st.session_state.entwuerfe
+        
+        with st.expander(f"📥 {mail['betreff']} | Von: {mail['absender']}", expanded=ist_offen):
             st.write(mail['text'])
-            m_id = mail['id']
+            
             if st.button("KI-Antwort generieren", key=f"btn_{m_id}"):
                 with st.spinner("Analysiere & Formuliere..."):
                     docs = collection.query(query_texts=[mail['text']], n_results=2)
                     ctx = "\n".join(docs['documents'][0]) if docs['documents'] else ""
                     st.session_state.entwuerfe[m_id] = generiere_antwort(f"Antworte auf: {mail['text']}", kontext=ctx, mode="email")
+                    # FIX: Zwingt die Seite zum Neuladen, damit das Textfeld sofort erscheint
+                    st.rerun() 
+                    
             if m_id in st.session_state.entwuerfe:
                 entwurf = st.text_area("Entwurf:", value=st.session_state.entwuerfe[m_id], height=200, key=f"txt_{m_id}")
                 if st.button("Senden", type="primary", key=f"snd_{m_id}"):
