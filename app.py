@@ -14,28 +14,9 @@ from email.mime.multipart import MIMEMultipart
 import pandas as pd
 import json
 
-# --- 1. SETUP & PREMIUM UI ---
+# --- 1. SETUP ---
+# Custom CSS entfernt für das saubere, stabile Standard-Layout
 st.set_page_config(page_title="RESOLV.AI Enterprise", page_icon="⚡", layout="wide")
-
-# Custom CSS für Silicon Valley Look
-st.markdown("""
-<style>
-    /* Saubere Karten-Optik für Metrics und Container */
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; border-radius: 10px;
-        box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-    }
-    /* Buttons modernisieren */
-    .stButton > button {
-        border-radius: 8px; font-weight: 600; transition: all 0.2s ease-in-out;
-    }
-    .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    /* Sidebar anpassen */
-    section[data-testid="stSidebar"] { background-color: #111827; color: white; }
-    /* Verstecke Standard-Streamlit Menü */
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
 
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
@@ -86,18 +67,16 @@ collection = init_db()
 def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     if history is None: history = []
     
-    # 100% verifizierte Modelle aus deiner Abfrage
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
-    # Intelligentes Prompt-Routing
     if mode == "email":
-        system_prompt = "Du bist ein exzellenter, professioneller Customer Success Manager. Antworte souverän, fehlerfrei und auf Deutsch. Keine Platzhalter, keine erzeugten Namen."
+        system_prompt = "Du bist ein professioneller Customer Success Manager. Antworte in perfektem Deutsch als fließender Text. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#). Schreibe wie in einer ganz normalen E-Mail."
         temp = 0.2
     elif mode == "extract":
         system_prompt = "Du bist ein präziser API-Datenextraktor. Gib AUSSCHLIESSLICH reines JSON zurück. Keine Erklärungen, kein Markdown vor oder nach dem JSON."
         temp = 0.0
     elif mode == "content":
-        system_prompt = "Du bist ein kreativer Copywriter und Social Media Experte aus dem Silicon Valley. Schreibe fesselnd, modern und strukturiert. Nutze Absätze und Emojis gezielt."
+        system_prompt = "Du bist ein kreativer Copywriter. Schreibe fesselnd, modern und strukturiert. Nutze Absätze und Emojis gezielt."
         temp = 0.7
     else:
         system_prompt = "Du bist die RESOLV.AI Core Intelligence. Ein hochgradig effizienter, direkter Business-Berater. Antworte in klarem Deutsch."
@@ -113,21 +92,27 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     for model in fallback_chain:
         try:
             res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
-            return res.choices[0].message.content
+            antwort_text = res.choices[0].message.content
+            
+            # DER FIX FÜR E-MAILS: Wir löschen die Markdown-Sterne mit Gewalt aus dem Text
+            if mode == "email":
+                antwort_text = antwort_text.replace("**", "").replace("*", "").replace("###", "").replace("##", "")
+                
+            return antwort_text
         except Exception as e:
             fehler_log.append(f"{model}: {e}")
             continue
             
-    return f"🚨 Systemausfall. Alle Fallbacks offline. Log: {fehler_log}"
+    return f"🚨 Systemausfall. Log: {fehler_log}"
 
-# --- E-Mail Funktionen (Reduziert auf Kern) ---
+# --- E-Mail Funktionen ---
 def lese_emails():
-    # Simulation/Platzhalter für Stabilität (hier später echter IMAP Code für Produktion)
     try:
         mail = imaplib.IMAP4_SSL(imap_server)
         mail.login(email_adresse, email_passwort)
         mail.select("inbox")
         status, messages = mail.search(None, "ALL")
+        if not messages[0]: return []
         email_ids = messages[0].split()[-3:]
         gefundene_emails = []
         for e_id in reversed(email_ids):
@@ -152,8 +137,8 @@ def lese_emails():
 
 # --- 4. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.markdown("<h2 style='text-align: center; color: white;'>⚡ RESOLV.AI</h2>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color: #374151;'>", unsafe_allow_html=True)
+    st.markdown("## ⚡ RESOLV.AI")
+    st.markdown("---")
     
     nav_btn = lambda icon, text, target: st.button(f"{icon} {text}", use_container_width=True, type="primary" if st.session_state.aktive_seite == target else "secondary")
     
@@ -235,7 +220,6 @@ elif st.session_state.aktive_seite == "Extraktion":
                 if text:
                     prompt = f"Extrahiere: {ziele}. Format: JSON. Dokument:\n{text[:2000]}"
                     raw_antwort = generiere_antwort(prompt, mode="extract")
-                    # JSON Reinigung
                     clean_json = raw_antwort.replace("```json", "").replace("```", "").strip()
                     try:
                         daten = json.loads(clean_json)
