@@ -68,13 +68,14 @@ collection = init_db()
 # --- 4. ENGINE ---
 def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extraction=False):
     if history is None: history = []
-    fallback_modelle = ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
+    # FIX: Neueste, stabile Groq-Modelle
+    fallback_modelle = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
     
     if is_email:
         system_prompt = "Du bist ein professioneller Kundenservice-Agent. Antworte auf Deutsch. KEIN Markdown (**), KEINE Betreffzeile. Erfinde NIEMALS Namen; nutze bei unbekannten Namen 'Sehr geehrte Damen und Herren'."
         temperatur = 0.1
     elif is_extraction:
-        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON-Format zurück, ohne zusätzlichen Text. Das Format muss mit { beginnen und mit } enden."
+        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON zurück."
         temperatur = 0.0
     else:
         system_prompt = "Du bist der intelligente KI-Berater von RESOLV.AI. Antworte professionell und auf Deutsch. Du darfst Markdown nutzen."
@@ -86,6 +87,7 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
     for msg in history[-6:]: api_messages.append({"role": msg["role"], "content": msg["content"]})
     api_messages.append({"role": "user", "content": prompt})
 
+    letzter_fehler = ""
     for model_name in fallback_modelle:
         try:
             kwargs = {"response_format": {"type": "json_object"}} if is_extraction else {}
@@ -93,8 +95,12 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
                 model=model_name, messages=api_messages, temperature=temperatur, max_tokens=2000, **kwargs
             )
             return response.choices[0].message.content
-        except: continue
-    return "🚨 Systemfehler. Kein Groq-Modell erreichbar."
+        except Exception as e: 
+            letzter_fehler = str(e)
+            continue
+            
+    # FIX: Zeigt den wahren Fehler an, wenn alle Modelle scheitern
+    return f"🚨 Systemfehler. Kein Groq-Modell erreichbar. Fehlerdetail: {letzter_fehler}"
 
 # --- 5. E-MAIL PIPELINES ---
 def lese_letzte_emails(limit=3):
@@ -276,12 +282,10 @@ elif st.session_state.aktive_seite == "Extraktion":
                     prompt = f"Lies den folgenden Text und extrahiere diese Informationen: {gesuchte_daten}. Antworte ausschließlich in einem sauberen JSON-Format, wobei die gesuchten Daten die Schlüssel sind. Text:\n\n{text[:3000]}"
                     antwort_json_string = generiere_antwort(prompt, is_extraction=True)
                     
-                    # --- DER FIX: Störende Zeichen der KI abschneiden ---
                     antwort_json_string = antwort_json_string.replace("```json", "").replace("```", "").strip()
                     
                     try:
                         daten_dict = json.loads(antwort_json_string)
-                        # Falls die KI eine Liste zurückgibt statt eines normalen Blocks:
                         if isinstance(daten_dict, list):
                             df = pd.DataFrame(daten_dict)
                         else:
