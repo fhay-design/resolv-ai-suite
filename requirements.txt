@@ -4,5 +4,5 @@ anthropic>=1.11.0
 groq
 chromadb
 pypdf
-gspread==6.0.0
+gspread==5.12.4
 google-auth==2.26.2

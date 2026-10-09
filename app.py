@@ -265,10 +265,10 @@ elif st.session_state.aktive_seite == "Extraktion":
                         if not sh.get_all_values():
                             sh.append_row(df_to_save.columns.tolist())
                             
-                        # Die eigentlichen Daten anhängen
+                        # Die eigentlichen Daten anhängen (Als Block/Bulk-Upload)
                         daten_liste = df_to_save.values.tolist()
-                        for zeile in daten_liste:
-                            sh.append_row([str(val) for val in zeile])
+                        string_daten = [[str(val) for val in zeile] for zeile in daten_liste]
+                        sh.append_rows(string_daten)
                             
                         st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
                     except Exception as e:
