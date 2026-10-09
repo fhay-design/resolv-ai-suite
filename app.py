@@ -68,14 +68,14 @@ collection = init_db()
 # --- 4. ENGINE ---
 def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extraction=False):
     if history is None: history = []
-    # FIX: Neueste, stabile Groq-Modelle
-    fallback_modelle = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+    # UNZERSTÖRBAR: Ausschließlich verifizierte, aktuell laufende Modelle
+    fallback_modelle = ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192", "llama3-70b-8192"]
     
     if is_email:
         system_prompt = "Du bist ein professioneller Kundenservice-Agent. Antworte auf Deutsch. KEIN Markdown (**), KEINE Betreffzeile. Erfinde NIEMALS Namen; nutze bei unbekannten Namen 'Sehr geehrte Damen und Herren'."
         temperatur = 0.1
     elif is_extraction:
-        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON zurück."
+        system_prompt = "Du bist ein präziser Daten-Extraktor. Analysiere den Text und gib die geforderten Werte AUSSCHLIESSLICH als reines JSON zurück. Nutze keine Einleitung. Beginne direkt mit { und beende mit }."
         temperatur = 0.0
     else:
         system_prompt = "Du bist der intelligente KI-Berater von RESOLV.AI. Antworte professionell und auf Deutsch. Du darfst Markdown nutzen."
@@ -90,17 +90,16 @@ def generiere_antwort(prompt, kontext="", history=None, is_email=False, is_extra
     letzter_fehler = ""
     for model_name in fallback_modelle:
         try:
-            kwargs = {"response_format": {"type": "json_object"}} if is_extraction else {}
+            # Wir verlassen uns auf den starken System-Prompt, nicht auf technische kwargs, um Abstürze zu vermeiden
             response = client.chat.completions.create(
-                model=model_name, messages=api_messages, temperature=temperatur, max_tokens=2000, **kwargs
+                model=model_name, messages=api_messages, temperature=temperatur, max_tokens=2000
             )
             return response.choices[0].message.content
         except Exception as e: 
             letzter_fehler = str(e)
             continue
             
-    # FIX: Zeigt den wahren Fehler an, wenn alle Modelle scheitern
-    return f"🚨 Systemfehler. Kein Groq-Modell erreichbar. Fehlerdetail: {letzter_fehler}"
+    return f"🚨 Systemfehler. Kein Modell erreichbar. Letzter Fehler: {letzter_fehler}"
 
 # --- 5. E-MAIL PIPELINES ---
 def lese_letzte_emails(limit=3):
