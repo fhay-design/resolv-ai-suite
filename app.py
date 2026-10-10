@@ -221,15 +221,17 @@ elif st.session_state.aktive_seite == "Content":
     colA, colB = st.columns([2,1])
     stichpunkte = colA.text_area("Eckdaten der Immobilie (z.B. 4 Zimmer, Balkon Südseite, saniert 2022, 450.000€, Köln-Lindenthal)", height=100)
     
-    # Der Bulk-Uploader für mehrere Bilder gleichzeitig
     foto_uploads = colA.file_uploader("Optional: Objekt-Fotos zur visuellen Analyse hochladen (Mehrfachauswahl möglich!)", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+    
+    # HIER IST DER NEUE ZÄHLER: Visuelles Feedback für den Nutzer
+    if foto_uploads:
+        colA.info(f"📸 {len(foto_uploads)} Foto(s) für die Analyse bereit.")
     
     format_typ = colB.selectbox("Was möchtest du erstellen?", ["ImmoScout Exposé", "TikTok / Reel Video-Skript"])
     
     if st.button("Magie starten ⚡", type="primary") and stichpunkte:
         analyseeffekt = ""
         
-        # 1. Wir loopen durch ALLE hochgeladenen Fotos
         if foto_uploads:
             with st.spinner(f"📸 Vision-KI analysiert {len(foto_uploads)} Fotos..."):
                 alle_details = []
@@ -238,12 +240,10 @@ elif st.session_state.aktive_seite == "Content":
                     details = analysiere_bild(bild_daten, prompt_typ="immo_details")
                     alle_details.append(f"Details aus Bild {i+1}: {details}")
                 
-                # Fügen alle Bild-Erkenntnisse zu einem Datensatz zusammen
                 kombinierte_details = "\n".join(alle_details)
                 analyseeffekt = f"\n\n[WICHTIGE VISUELLE DETAILS AUS DEN FOTOS]:\n{kombinierte_details}"
                 st.toast(f"Vision-KI hat {len(foto_uploads)} Bilder erfolgreich gescannt!", icon="👁️")
                 
-        # 2. Endprodukt generieren
         with st.spinner("✍️ KI webt visuelle Details in Premium-Content ein..."):
             modus = "expose" if format_typ == "ImmoScout Exposé" else "video_script"
             prompt = f"Erstelle ein {format_typ} basierend auf diesen Daten: {stichpunkte}. {analyseeffekt}"
