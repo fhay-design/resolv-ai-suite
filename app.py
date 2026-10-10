@@ -6,7 +6,7 @@ from pypdf import PdfReader
 import gspread
 from google.oauth2.service_account import Credentials
 
-from ai_engine import generiere_antwort, get_tenant_collection
+from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild
 from email_agent import lese_emails
 from database import supabase, get_tenant_info
 
@@ -80,10 +80,7 @@ with st.sidebar:
     if nav_btn("📧", "Kunden-Mails", "Email"): st.session_state.aktive_seite = "Email"; st.rerun()
     if nav_btn("📑", "Daten-Extraktion", "Extraktion"): st.session_state.aktive_seite = "Extraktion"; st.rerun()
     if nav_btn("📚", "Objekt-Wissen", "Wissen"): st.session_state.aktive_seite = "Wissen"; st.rerun()
-    
-    # HIER IST DER NEUE IMMOBILIEN-TAB!
     if nav_btn("✨", "Immo-Studio", "Content"): st.session_state.aktive_seite = "Content"; st.rerun()
-    
     if nav_btn("⚙️", "Einstellungen", "Settings"): st.session_state.aktive_seite = "Settings"; st.rerun()
     
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -153,7 +150,6 @@ elif st.session_state.aktive_seite == "Email":
 
 elif st.session_state.aktive_seite == "Extraktion":
     st.title("📑 Strukturierte Objektdaten-Extraktion")
-    # HIER GEÄNDERT: Fokus auf Immobilien-Attribute
     ziele = st.text_input("Ziel-Attribute (Was soll in die Tabelle?):", "Adresse, Kaufpreis, Wohnfläche, Zimmeranzahl, Baujahr, Energieklasse")
     upload = st.file_uploader("Exposé / Grundriss / Energieausweis hochladen (PDF)", type="pdf")
     
@@ -216,23 +212,48 @@ elif st.session_state.aktive_seite == "Wissen":
             user_collection.upsert(documents=chunks, metadatas=[{"source": upload.name}]*len(chunks), ids=[f"{upload.name}_{i}" for i in range(len(chunks))])
             st.success("Erfolgreich ins Objektwissen integriert.")
 
-# --- HIER IST DAS NEUE IMMO-STUDIO ---
+# --- DYNAMISCHES KI-IMMOBILIEN-STUDIO ---
 elif st.session_state.aktive_seite == "Content":
     st.title("✨ KI-Immobilien-Studio")
-    st.write("Erstelle aus rohen Stichpunkten hochkonvertierende Exposés und virale Video-Skripte.")
+    st.write("Erstelle aus rohen Eckdaten und Fotos hochkonvertierende Exposés und virale Video-Skripte.")
     
     colA, colB = st.columns([2,1])
-    stichpunkte = colA.text_area("Eckdaten der Immobilie (z.B. 4 Zimmer, Balkon Südseite, saniert 2022, 450.000€, Köln-Lindenthal)", height=150)
+    stichpunkte = colA.text_area("Eckdaten der Immobilie (z.B. 4 Zimmer, Balkon Südseite, saniert 2022, 450.000€, Köln-Lindenthal)", height=100)
+    
+    # NEU: Das Auge für die Makler. Fotos hochladen!
+    foto_upload = colA.file_uploader("Optional: Objekt-Foto zur visuellen Analyse hochladen (z.B. Küche, Außenansicht)", type=["jpg", "png", "jpeg"])
+    
     format_typ = colB.selectbox("Was möchtest du erstellen?", ["ImmoScout Exposé", "TikTok / Reel Video-Skript"])
     
     if st.button("Magie starten ⚡", type="primary") and stichpunkte:
-        with st.spinner("KI formuliert..."):
+        analyseeffekt = ""
+        # 1. Wenn ein Foto vorhanden ist, nutzen wir die neue Vision API
+        if foto_upload:
+            with st.spinner("📸 Vision-KI analysiert dein Foto auf Ausstattungsmerkmale..."):
+                bild_daten = foto_upload.read()
+                visuelle_details = analysiere_bild(bild_daten, prompt_typ="immo_details")
+                analyseeffekt = f"\n\n[WICHTIGE VISUELLE DETAILS VOM HOCHGELADENEN FOTO]:\n{visuelle_details}"
+                st.toast("Auge aktiviert! Foto-Details erfolgreich extrahiert.", icon="👁️")
+                
+        # 2. Endprodukt generieren
+        with st.spinner("✍️ KI generiert Premium-Content..."):
             modus = "expose" if format_typ == "ImmoScout Exposé" else "video_script"
-            prompt = f"Erstelle ein {format_typ} basierend auf diesen rohen Daten: {stichpunkte}"
+            
+            # Die Eckdaten werden mit den gesehenden Details des Fotos vermischt!
+            prompt = f"Erstelle ein {format_typ} basierend auf diesen Daten: {stichpunkte}. {analyseeffekt}"
             
             antwort = generiere_antwort(prompt, mode=modus)
+            st.markdown("### Dein Premium Ergebnis:")
             st.info(antwort)
             st.session_state.stats["content"] += 1
+            
+            # Highlight: Interaktiver 'Direkt veröffentlichen' Simulator (Workflow-Monopol)
+            st.write("---")
+            colX, colY = st.columns(2)
+            if colX.button("Publish to Instagram / TikTok 🚀", use_container_width=True):
+                st.success("✅ Content wurde erfolgreich zur Freigabe für Social Media vorgemerkt!")
+            if colY.button("Direkt an CRM übergeben (onOffice) 🔗", use_container_width=True):
+                st.success("✅ Inserat-Veredelung an onOffice / FlowFact API übertragen!")
 
 elif st.session_state.aktive_seite == "Settings":
     st.title("⚙️ Einstellungen")
