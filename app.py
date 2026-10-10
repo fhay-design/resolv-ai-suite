@@ -66,6 +66,7 @@ if not st.session_state.logged_in:
                         st.error(f"Fehler: {e}")
     st.stop()
 
+# Datentresor für den aktuellen Mandanten laden
 user_collection = get_tenant_collection(st.session_state.user.id)
 
 # --- 3. SIDEBAR NAVIGATION ---
@@ -212,7 +213,7 @@ elif st.session_state.aktive_seite == "Wissen":
             user_collection.upsert(documents=chunks, metadatas=[{"source": upload.name}]*len(chunks), ids=[f"{upload.name}_{i}" for i in range(len(chunks))])
             st.success("Erfolgreich ins Objektwissen integriert.")
 
-# --- DYNAMISCHES KI-IMMOBILIEN-STUDIO ---
+# --- DYNAMISCHES KI-IMMOBILIEN-STUDIO (MIT MULTI-BILDER-UPLOAD) ---
 elif st.session_state.aktive_seite == "Content":
     st.title("✨ KI-Immobilien-Studio")
     st.write("Erstelle aus rohen Eckdaten und Fotos hochkonvertierende Exposés und virale Video-Skripte.")
@@ -220,26 +221,31 @@ elif st.session_state.aktive_seite == "Content":
     colA, colB = st.columns([2,1])
     stichpunkte = colA.text_area("Eckdaten der Immobilie (z.B. 4 Zimmer, Balkon Südseite, saniert 2022, 450.000€, Köln-Lindenthal)", height=100)
     
-    # NEU: Das Auge für die Makler. Fotos hochladen!
-    foto_upload = colA.file_uploader("Optional: Objekt-Foto zur visuellen Analyse hochladen (z.B. Küche, Außenansicht)", type=["jpg", "png", "jpeg"])
+    # Der Bulk-Uploader für mehrere Bilder gleichzeitig
+    foto_uploads = colA.file_uploader("Optional: Objekt-Fotos zur visuellen Analyse hochladen (Mehrfachauswahl möglich!)", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
     
     format_typ = colB.selectbox("Was möchtest du erstellen?", ["ImmoScout Exposé", "TikTok / Reel Video-Skript"])
     
     if st.button("Magie starten ⚡", type="primary") and stichpunkte:
         analyseeffekt = ""
-        # 1. Wenn ein Foto vorhanden ist, nutzen wir die neue Vision API
-        if foto_upload:
-            with st.spinner("📸 Vision-KI analysiert dein Foto auf Ausstattungsmerkmale..."):
-                bild_daten = foto_upload.read()
-                visuelle_details = analysiere_bild(bild_daten, prompt_typ="immo_details")
-                analyseeffekt = f"\n\n[WICHTIGE VISUELLE DETAILS VOM HOCHGELADENEN FOTO]:\n{visuelle_details}"
-                st.toast("Auge aktiviert! Foto-Details erfolgreich extrahiert.", icon="👁️")
+        
+        # 1. Wir loopen durch ALLE hochgeladenen Fotos
+        if foto_uploads:
+            with st.spinner(f"📸 Vision-KI analysiert {len(foto_uploads)} Fotos..."):
+                alle_details = []
+                for i, foto in enumerate(foto_uploads):
+                    bild_daten = foto.read()
+                    details = analysiere_bild(bild_daten, prompt_typ="immo_details")
+                    alle_details.append(f"Details aus Bild {i+1}: {details}")
+                
+                # Fügen alle Bild-Erkenntnisse zu einem Datensatz zusammen
+                kombinierte_details = "\n".join(alle_details)
+                analyseeffekt = f"\n\n[WICHTIGE VISUELLE DETAILS AUS DEN FOTOS]:\n{kombinierte_details}"
+                st.toast(f"Vision-KI hat {len(foto_uploads)} Bilder erfolgreich gescannt!", icon="👁️")
                 
         # 2. Endprodukt generieren
-        with st.spinner("✍️ KI generiert Premium-Content..."):
+        with st.spinner("✍️ KI webt visuelle Details in Premium-Content ein..."):
             modus = "expose" if format_typ == "ImmoScout Exposé" else "video_script"
-            
-            # Die Eckdaten werden mit den gesehenden Details des Fotos vermischt!
             prompt = f"Erstelle ein {format_typ} basierend auf diesen Daten: {stichpunkte}. {analyseeffekt}"
             
             antwort = generiere_antwort(prompt, mode=modus)
@@ -247,7 +253,6 @@ elif st.session_state.aktive_seite == "Content":
             st.info(antwort)
             st.session_state.stats["content"] += 1
             
-            # Highlight: Interaktiver 'Direkt veröffentlichen' Simulator (Workflow-Monopol)
             st.write("---")
             colX, colY = st.columns(2)
             if colX.button("Publish to Instagram / TikTok 🚀", use_container_width=True):
