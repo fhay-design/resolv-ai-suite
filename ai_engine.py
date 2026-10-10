@@ -12,7 +12,6 @@ if not api_key:
 client = Groq(api_key=api_key)
 
 def get_tenant_collection(tenant_id):
-    """Erstellt oder lädt einen strikt isolierten Datentresor für den jeweiligen Kunden."""
     db = chromadb.PersistentClient(path="./chroma_db")
     safe_tenant_id = str(tenant_id).replace("-", "")
     return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
@@ -21,21 +20,22 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     if history is None: history = []
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
-    # HIER SIND DIE NEUEN IMMOBILIEN-PROMPTS
     if mode == "email":
-        system_prompt = "Du bist ein Top-Immobilienmakler. Antworte auf Kundenanfragen (z.B. Besichtigungstermine) freundlich, verbindlich und höchst professionell. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#)."
+        system_prompt = "Du bist ein Top-Immobilienmakler. Antworte auf Kundenanfragen freundlich und verbindlich. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#)."
         temp = 0.2
     elif mode == "extract":
-        system_prompt = "Du bist ein Datenextraktor für Immobilien-Software. Extrahiere Attribute wie Kaufpreis, Wohnfläche, Zimmeranzahl, Baujahr und Energieklasse in striktes JSON. Keine Erklärungen davor oder danach."
+        system_prompt = "Du bist ein Datenextraktor. Extrahiere Attribute in striktes JSON. Keine Erklärungen davor oder danach."
         temp = 0.0
     elif mode == "expose":
-        system_prompt = "Du bist ein elitärer Immobilien-Copywriter. Schreibe ein emotionales, verkaufsstarkes Exposé für ImmobilienScout24. Strukturiere in: 🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. Mache dem Leser Lust auf eine Besichtigung."
+        # HIER IST DAS UPDATE:
+        system_prompt = "Du bist ein elitärer Immobilien-Copywriter. Schreibe ein emotionales Exposé für ImmobilienScout24. Strukturiere in: 🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. WICHTIG: Gib AUSSCHLIESSLICH das fertige Exposé zurück. Schreibe KEINE Einleitung, KEIN Fazit und KEINE Kommentare wie 'Hier ist Ihr Exposé'."
         temp = 0.7
     elif mode == "video_script":
-        system_prompt = "Du bist ein Social Media Producer für Immobilien. Schreibe ein virales Skript für ein Instagram Reel/TikTok (max. 45 Sekunden). Unterteile strikt in [Kamera/Visuals] und [Sprecher]. Starte mit einer starken Hook!"
+        # HIER IST DAS UPDATE:
+        system_prompt = "Du bist ein Social Media Producer. Schreibe ein virales Skript (max. 45 Sekunden). Unterteile strikt in [Kamera/Visuals] und [Sprecher]. WICHTIG: Gib AUSSCHLIESSLICH das Skript zurück. Keine Begrüßung, keine Verabschiedung, kein erklärender Text."
         temp = 0.7
     else:
-        system_prompt = "Du bist die RESOLV.AI Core Intelligence. Ein hochgradig effizienter, direkter Business-Berater für Immobilienmakler. Antworte in klarem Deutsch."
+        system_prompt = "Du bist die RESOLV.AI Core Intelligence. Ein direkter Business-Berater für Immobilienmakler. Antworte in klarem Deutsch."
         temp = 0.5
         
     if kontext: 
