@@ -6,3 +6,4 @@ chromadb
 pypdf
 gspread==5.12.4
 google-auth==2.26.2
+supabase
