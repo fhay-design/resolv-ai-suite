@@ -7,7 +7,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- UNSERE NEUEN, SAUBEREN MODULE ---
-from ai_engine import generiere_antwort, collection
+# HIER NEU: get_tenant_collection importiert!
+from ai_engine import generiere_antwort, get_tenant_collection
 from email_agent import lese_emails
 from database import supabase, get_tenant_info
 
@@ -24,7 +25,7 @@ if "entwuerfe" not in st.session_state: st.session_state.entwuerfe = {}
 if "extrahierte_daten" not in st.session_state: st.session_state.extrahierte_daten = None
 if "stats" not in st.session_state: st.session_state.stats = {"mails": 0, "extraktionen": 0, "content": 0}
 
-# --- 2. LOGIN & REGISTRIERUNG (Supabase Auth) ---
+# --- 2. LOGIN & REGISTRIERUNG ---
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -55,10 +56,8 @@ if not st.session_state.logged_in:
                 reg_password = st.text_input("Passwort (min. 6 Zeichen)", type="password")
                 if st.form_submit_button("Account erstellen", use_container_width=True):
                     try:
-                        # 1. User im Auth-System anlegen
                         res = supabase.auth.sign_up({"email": reg_email, "password": reg_password})
                         if res.user:
-                            # 2. Mandant in unserer Tabelle anlegen
                             supabase.table("tenants").insert({
                                 "user_id": res.user.id,
                                 "company_name": reg_firma,
@@ -68,6 +67,10 @@ if not st.session_state.logged_in:
                     except Exception as e:
                         st.error(f"Fehler: {e}")
     st.stop()
+
+# --- DATENTRESOR LADEN ---
+# Holt sich dynamisch den Ordner des eingeloggten Nutzers
+user_collection = get_tenant_collection(st.session_state.user.id)
 
 # --- 3. SIDEBAR NAVIGATION ---
 with st.sidebar:
@@ -97,7 +100,7 @@ if st.session_state.aktive_seite == "Dashboard":
     eingesparte_zeit = (st.session_state.stats["mails"] * 5) + (st.session_state.stats["extraktionen"] * 10) + (st.session_state.stats["content"] * 15)
     
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Wissen", f"{collection.count()} Docs", delta="In Datenbank")
+    c1.metric("Wissen", f"{user_collection.count()} Docs", delta="Isoliert & Sicher") # HIER GEÄNDERT
     c2.metric("Mails", st.session_state.stats["mails"])
     c3.metric("Tabellen", st.session_state.stats["extraktionen"])
     c4.metric("Content", st.session_state.stats["content"])
@@ -137,7 +140,7 @@ elif st.session_state.aktive_seite == "Email":
             st.write(mail['text'])
             if st.button("KI-Antwort generieren", key=f"btn_{m_id}"):
                 with st.spinner("Analysiere & Formuliere..."):
-                    docs = collection.query(query_texts=[mail['text']], n_results=2)
+                    docs = user_collection.query(query_texts=[mail['text']], n_results=2) # HIER GEÄNDERT
                     ctx = "\n".join(docs['documents'][0]) if docs['documents'] else ""
                     st.session_state.entwuerfe[m_id] = generiere_antwort(f"Antworte auf: {mail['text']}", kontext=ctx, mode="email")
                     st.rerun() 
@@ -151,7 +154,6 @@ elif st.session_state.aktive_seite == "Email":
 
 elif st.session_state.aktive_seite == "Extraktion":
     st.title("📑 Strukturierte Datenextraktion")
-    
     ziele = st.text_input("Ziel-Attribute:", "Firma, Rechnungsnummer, Gesamtbetrag")
     upload = st.file_uploader("Dokument hochladen", type="pdf")
     
@@ -175,9 +177,7 @@ elif st.session_state.aktive_seite == "Extraktion":
             
     if st.session_state.extrahierte_daten is not None:
         st.dataframe(st.session_state.extrahierte_daten, use_container_width=True)
-        
         if st.button("🚀 Live in Google Sheets eintragen", type="primary"):
-            # DYNAMISCH: Wir holen die URL jetzt direkt aus dem Account des eingeloggten Nutzers!
             sheet_url = st.session_state.tenant_data.get('google_sheet_url') if st.session_state.tenant_data else None
             
             if not sheet_url:
@@ -195,8 +195,7 @@ elif st.session_state.aktive_seite == "Extraktion":
                         string_daten = [[str(val) for val in zeile] for zeile in df_to_save.values.tolist()]
                         
                         try:
-                            if not sh.get_all_values():
-                                sh.append_row(df_to_save.columns.tolist())
+                            if not sh.get_all_values(): sh.append_row(df_to_save.columns.tolist())
                             sh.append_rows(string_daten)
                             st.success("✅ Daten stehen jetzt live in deiner Google Tabelle!")
                         except Exception as inner_e:
@@ -214,7 +213,7 @@ elif st.session_state.aktive_seite == "Wissen":
             reader = PdfReader(upload)
             text = "".join([p.extract_text() for p in reader.pages])
             chunks = [text[i:i+800] for i in range(0, len(text), 800)]
-            collection.upsert(documents=chunks, metadatas=[{"source": upload.name}]*len(chunks), ids=[f"{upload.name}_{i}" for i in range(len(chunks))])
+            user_collection.upsert(documents=chunks, metadatas=[{"source": upload.name}]*len(chunks), ids=[f"{upload.name}_{i}" for i in range(len(chunks))]) # HIER GEÄNDERT
             st.success("Erfolgreich ins Firmenwissen integriert.")
 
 elif st.session_state.aktive_seite == "Content":
@@ -240,9 +239,7 @@ elif st.session_state.aktive_seite == "Settings":
         
         if st.form_submit_button("💾 Speichern", type="primary"):
             try:
-                # Update in der Supabase Datenbank
                 supabase.table("tenants").update({"google_sheet_url": neue_url}).eq("user_id", st.session_state.user.id).execute()
-                # Update auf der Webseite
                 st.session_state.tenant_data['google_sheet_url'] = neue_url
                 st.success("✅ Einstellungen gespeichert!")
             except Exception as e:

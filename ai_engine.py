@@ -9,21 +9,17 @@ api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
     print("🚨 Warnung: Kein GROQ_API_KEY gefunden!")
 
-# Groq Client initialisieren
 client = Groq(api_key=api_key)
 
-# ChromaDB für das RAG (Firmenwissen) initialisieren
-def init_db():
+# HIER IST DIE MAGIE: Dynamische Ordner pro Kunde
+def get_tenant_collection(tenant_id):
+    """Erstellt oder lädt einen strikt isolierten Datentresor für den jeweiligen Kunden."""
     db = chromadb.PersistentClient(path="./chroma_db")
-    return db.get_or_create_collection(name="firmenwissen")
-
-collection = init_db()
+    # ChromaDB mag keine Bindestriche im Namen, wir bereinigen die ID kurz
+    safe_tenant_id = str(tenant_id).replace("-", "")
+    return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
 
 def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
-    """
-    Die zentrale Core-Intelligence von RESOLV.AI.
-    Steuert Chat, E-Mail-Generierung, Datenextraktion und Content-Erstellung.
-    """
     if history is None: history = []
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
