@@ -47,19 +47,24 @@ if "entwuerfe" not in st.session_state: st.session_state.entwuerfe = {}
 if "extrahierte_daten" not in st.session_state: st.session_state.extrahierte_daten = None
 if "stats" not in st.session_state: st.session_state.stats = {"mails": 0, "extraktionen": 0, "content": 0}
 
-# --- 2. LOGIN SCREEN ---
+# --- 2. LOGIN SCREEN (Neu mit Enter-Support) ---
 if not st.session_state.logged_in:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<h1 style='text-align: center; font-size: 3rem;'>⚡ RESOLV.AI</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray; margin-bottom: 30px;'>Secure Enterprise Workspace</p>", unsafe_allow_html=True)
-        passwort_eingabe = st.text_input("Authentifizierung", type="password", placeholder="Master-Key eingeben...", label_visibility="collapsed")
-        if st.button("System starten", use_container_width=True, type="primary"):
-            if passwort_eingabe == app_password:
-                st.session_state.logged_in = True
-                st.rerun()
-            else: st.error("Zugriff verweigert.")
+        
+        with st.form("login_form"):
+            passwort_eingabe = st.text_input("Authentifizierung", type="password", placeholder="Master-Key eingeben...", label_visibility="collapsed")
+            submitted = st.form_submit_button("System starten", use_container_width=True, type="primary")
+            
+            if submitted:
+                if passwort_eingabe == app_password:
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else: 
+                    st.error("Zugriff verweigert.")
     st.stop()
 
 # --- 3. CORE ENGINE ---
@@ -245,7 +250,6 @@ elif st.session_state.aktive_seite == "Extraktion":
         csv = st.session_state.extrahierte_daten.to_csv(index=False).encode('utf-8')
         col_csv.download_button("💾 Als CSV exportieren", csv, "extrakt.csv", "text/csv")
         
-        # DER GOOGLE SHEETS AUTOMATISIERUNGS-BUTTON
         if col_sheet.button("🚀 Live in Google Sheets eintragen", type="primary"):
             if not google_json_str:
                 st.error("🚨 Der Google API Schlüssel in den Secrets fehlt oder ist fehlerhaft.")
@@ -257,18 +261,15 @@ elif st.session_state.aktive_seite == "Extraktion":
                         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
                         gc = gspread.authorize(creds)
                         
-                        # --- HIER IST DEINE DIREKTE URL EINGEBAUT ---
                         sh = gc.open_by_url("https://docs.google.com/spreadsheets/d/1PmPtL_ymo-5I1bikslJHlJj34TFiCYVzBUEUCWgh-GE/edit?gid=0#gid=0").sheet1
                         
                         df_to_save = st.session_state.extrahierte_daten.fillna("")
                         string_daten = [[str(val) for val in zeile] for zeile in df_to_save.values.tolist()]
                         
                         try:
-                            # Wenn Tabelle leer ist, Kopfzeilen schreiben
                             if not sh.get_all_values():
                                 sh.append_row(df_to_save.columns.tolist())
                             
-                            # Die echten Daten anhängen
                             sh.append_rows(string_daten)
                             st.success("✅ Magie erfolgreich: Daten stehen jetzt live in deiner Google Tabelle!")
                         except Exception as inner_e:
