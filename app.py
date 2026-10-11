@@ -217,3 +217,4 @@ elif st.session_state.aktive_seite == "Settings":
             supabase.table("tenants").update({"google_sheet_url": neue}).eq("user_id", st.session_state.user.id).execute()
             st.session_state.tenant_data['google_sheet_url'] = neue
             st.success("Gespeichert!")
+# Force Cache Reset
