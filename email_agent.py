@@ -49,7 +49,14 @@ def lese_emails(limit=5):
                     if isinstance(subject, bytes):
                         subject = subject.decode(encoding if encoding else "utf-8", errors='ignore')
                         
-                    from_ = msg.get("From")
+                    from_ = str(msg.get("From"))
+                    
+                    # ULTIMATIVER ROBOTER-FILTER
+                    from_lower = from_.lower()
+                    bots = ["noreply", "no-reply", "daemon", "postmaster", "mailer", "system", "support"]
+                    if any(b in from_lower for b in bots):
+                        continue 
+                    
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -64,7 +71,7 @@ def lese_emails(limit=5):
                             
                     posteingang.append({
                         "id": m_id.decode("utf-8"),
-                        "absender": str(from_),
+                        "absender": from_,
                         "betreff": str(subject),
                         "text": str(body).strip()[:1500]
                     })
@@ -74,7 +81,6 @@ def lese_emails(limit=5):
         return f"🚨 IMAP Verbindungsfehler: {e}"
 
 def sende_email(empfaenger, betreff, text):
-    """Sendet eine echte E-Mail über den SMTP Server."""
     if not EMAIL_ACCOUNT or not EMAIL_PASSWORD: return False, "Keine Zugangsdaten"
     try:
         msg = MIMEMultipart()
@@ -93,13 +99,17 @@ def sende_email(empfaenger, betreff, text):
         return False, str(e)
 
 def loesche_email(mail_id_str):
-    """Verschiebt eine E-Mail direkt in den Papierkorb/Spam (Flag: Deleted)."""
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
         mail.select("inbox")
+        # Bei Google Mail explizit das Spam-Label anheften
+        try:
+            mail.store(mail_id_str.encode('utf-8'), '+X-GM-LABELS', '\\Spam')
+        except: pass
+        # Aus der Inbox löschen
         mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Deleted')
-        mail.expunge() # Endgültig aus der Inbox entfernen
+        mail.expunge()
         mail.logout()
         return True
     except Exception as e:
