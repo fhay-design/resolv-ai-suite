@@ -17,24 +17,23 @@ def get_tenant_collection(tenant_id):
     safe_tenant_id = str(tenant_id).replace("-", "")
     return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
 
-def analysiere_bild(image_bytes, prompt_typ="detail"):
+def analysiere_bild(image_bytes, prompt_typ="immo_details"):
     """
-    Analysiert Immobilien-Fotos mit Hilfe der Groq Vision KI (llama-3.2-90b-vision-preview)
-    und extrahiert bauliche und emotionale Details.
+    Analysiert Bilder strikt faktenbasiert ohne Spekulation.
     """
     if not image_bytes:
         return ""
         
     try:
-        # Bild in das von der API geforderte base64-Format umwandeln
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        if prompt_typ == "immo_details":
-            user_prompt = "Welche Ausstattungsmerkmale, Materialien, Zustände (z.B. renoviert/sanierungsbedürftig) und Besonderheiten siehst du auf diesem Foto? Antworte in stichpunktartigen Fakten (Deutsch), die für ein Exposé wertvoll sind."
-        else:
-            user_prompt = "Beschreibe die Atmosphäre und visuelle Höhepunkte dieses Raumes/Objektes für ein Marketing-Skript oder Social Media (Deutsch)."
+        user_prompt = (
+            "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, "
+            "die auf dem Bild zweifelsfrei sichtbar sind (z. B. Fliesenart, Fensterform, Sanitärobjekte, Deckenhöhe). "
+            "Erfinde KEINE Räume, Materialien oder Zustände, die verdeckt oder nicht im Bildausschnitt sind. "
+            "Gib eine stichpunktartige Liste sichtbarer Fakten zurück."
+        )
 
-        # Wir nutzen das stärkste Vision-Modell von Meta auf Groq
         response = client.chat.completions.create(
             model="llama-3.2-90b-vision-preview",
             messages=[
@@ -51,8 +50,8 @@ def analysiere_bild(image_bytes, prompt_typ="detail"):
                     ]
                 }
             ],
-            temperature=0.2,
-            max_tokens=1000
+            temperature=0.1,
+            max_tokens=800
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -63,23 +62,48 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
     if mode == "email":
-        system_prompt = "Du bist ein Top-Immobilienmakler. Antworte auf Kundenanfragen freundlich und verbindlich. Nutze NIEMALS Formatierungen wie Sterne (**) oder Rauten (#)."
+        system_prompt = (
+            "Du bist ein Immobilien-Assistent auf Enterprise-Niveau. Beantworte Kundenanfragen präzise, "
+            "höflich und verbindlich. Nutze keine Markdown-Sternchen (**) oder Rauten (#). "
+            "Halte dich strikt an vorhandene Objektfakten."
+        )
         temp = 0.2
+
     elif mode == "extract":
-        system_prompt = "Du bist ein Datenextraktor. Extrahiere Attribute in striktes JSON. Keine Erklärungen davor oder danach."
+        system_prompt = (
+            "Du bist ein Enterprise-Datenextraktor. Extrahiere Objektmerkmale in valides JSON. "
+            "Keine Erklärungen, kein Markdown-Wrapper, nur valides JSON."
+        )
         temp = 0.0
+
     elif mode == "expose":
-        system_prompt = "Du bist ein elitärer Immobilien-Copywriter. Schreibe ein emotionales Exposé für ImmobilienScout24. Strukturiere in: 🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. WICHTIG: Gib AUSSCHLIESSLICH das fertige Exposé zurück. Schreibe KEINE Einleitung, KEIN Fazit und KEINE Kommentare wie 'Hier ist Ihr Exposé'."
-        temp = 0.7
+        # DIE ZERO-HALLUCINATION LEITPLANKE:
+        system_prompt = (
+            "Du bist ein elitärer Immobilien-Copywriter für Luxus- und Anlageobjekte. "
+            "Schreibe ein verkaufsstarkes Exposé für ImmobilienScout24 mit den Abschnitten: "
+            "🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. "
+            "\n"
+            "STRIKTE COMPLIANCE-REGELN:\n"
+            "1. Nutze AUSSCHLIESSLICH Fakten, die in den übergebenen Eckdaten oder Bild-Details belegt sind.\n"
+            "2. Wenn Bodenbeläge, Heizungsarten, Balkone oder Abstellräume NICHT explizit genannt oder im Bild zu sehen sind, darfst du sie UNTER KEINEN UMSTÄNDEN erwähnen oder erraten.\n"
+            "3. Gib AUSSCHLIESSLICH das fertige Exposé zurück. Keine Einleitungs- oder Höflichkeitsfloskeln."
+        )
+        temp = 0.3  # Reduziert von 0.7 auf 0.3 für maximale Faktentreue
+
     elif mode == "video_script":
-        system_prompt = "Du bist ein Social Media Producer. Schreibe ein virales Skript (max. 45 Sekunden). Unterteile strikt in [Kamera/Visuals] und [Sprecher]. WICHTIG: Gib AUSSCHLIESSLICH das Skript zurück. Keine Begrüßung, keine Verabschiedung, kein erklärender Text."
-        temp = 0.7
+        system_prompt = (
+            "Du bist ein Social-Media-Producer für Immobilienmakler. Schreibe ein 45-Sekunden-Skript für Instagram Reels. "
+            "Gliedere in [Visuell/Kamera] und [Audio/Sprecher]. Starte mit einer messerscharfen Hook. "
+            "Erwähne nur belegte Fakten. Gib AUSSCHLIESSLICH das Skript zurück."
+        )
+        temp = 0.4
+
     else:
-        system_prompt = "Du bist die RESOLV.AI Core Intelligence. Ein direkter Business-Berater für Immobilienmakler. Antworte in klarem Deutsch."
-        temp = 0.5
+        system_prompt = "Du bist RESOLV.AI Core. Ein hochgradig effizienter, präziser B2B-Berater für Immobilienunternehmen."
+        temp = 0.4
         
     if kontext: 
-        system_prompt += f"\n\nUnternehmenswissen:\n{kontext}"
+        system_prompt += f"\n\nObjekt- und Firmenwissen:\n{kontext}"
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history[-5:]: messages.append(msg)
@@ -88,7 +112,12 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     fehler_log = []
     for model in fallback_chain:
         try:
-            res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
+            res = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temp,
+                max_tokens=2500
+            )
             antwort_text = res.choices[0].message.content
             if mode == "email":
                 antwort_text = antwort_text.replace("**", "").replace("*", "").replace("###", "").replace("##", "")
