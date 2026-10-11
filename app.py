@@ -101,7 +101,6 @@ elif st.session_state.aktive_seite == "Email":
     if col1.button("📥 Mails abrufen", type="primary"):
         with st.spinner("Lade Anfragen..."):
             res = lese_emails()
-            # HIER IST DER FIX: Die App crasht nicht mehr bei Fehlern, sondern warnt dich.
             if isinstance(res, str):
                 st.error(res)
                 st.session_state.posteingang = []
@@ -115,6 +114,8 @@ elif st.session_state.aktive_seite == "Email":
         else:
             with st.spinner("Scanne auf Top-Käufer & formuliere Antworten..."):
                 for mail in st.session_state.posteingang:
+                    if not isinstance(mail, dict): continue # Ghost-Session Fix
+                    
                     q = qualifiziere_lead(mail.get('text', ''))
                     if q:
                         mail['qualifizierung'] = q
@@ -132,6 +133,10 @@ elif st.session_state.aktive_seite == "Email":
             st.rerun()
             
     for mail in st.session_state.posteingang:
+        # HIER IST DER FIX: Wir ignorieren alte Text-Strings im Speicher
+        if not isinstance(mail, dict):
+            continue
+            
         m_id = mail.get('id', 'unbekannt')
         ist_offen = m_id in st.session_state.entwuerfe
         
