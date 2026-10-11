@@ -9,7 +9,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio, qualifiziere_lead
-from email_agent import lese_emails, sende_email, loesche_email
+# HIER NEU: Import der neuen Funktion
+from email_agent import lese_emails, sende_email, loesche_email, markiere_als_beantwortet
 from database import supabase, get_tenant_info
 
 # --- 1. SETUP & SESSION STATES ---
@@ -24,8 +25,6 @@ if "posteingang" not in st.session_state: st.session_state.posteingang = []
 if "entwuerfe" not in st.session_state: st.session_state.entwuerfe = {}
 if "extrahierte_daten" not in st.session_state: st.session_state.extrahierte_daten = None
 if "stats" not in st.session_state: st.session_state.stats = {"mails": 0, "extraktionen": 0, "content": 0}
-
-# HIER IST DER ANTI-LOOP FIX
 if "verarbeitete_ids" not in st.session_state: st.session_state.verarbeitete_ids = set()
 
 # --- 2. LOGIN & REGISTRIERUNG ---
@@ -111,7 +110,6 @@ elif st.session_state.aktive_seite == "Email":
                     st.error(res)
                     st.session_state.posteingang = []
                 else:
-                    # Filtere Mails raus, die wir schon behandelt haben!
                     st.session_state.posteingang = [m for m in res if m['id'] not in st.session_state.verarbeitete_ids]
                     st.success("Postfach aktualisiert.")
                     
@@ -134,7 +132,6 @@ elif st.session_state.aktive_seite == "Email":
                             kat = q.get("kategorie", "B")
                             
                             if kat == "C":
-                                # FEST PROGRAMMIERTE PREMIUM-ABSAGE (Zero Hallucination)
                                 absage = (
                                     "Sehr geehrte Damen und Herren,\n\n"
                                     "vielen Dank für Ihr Interesse an der angefragten Immobilie.\n\n"
@@ -150,7 +147,9 @@ elif st.session_state.aktive_seite == "Email":
                                     sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", absage)
                                 
                                 loesche_email(mail.get('id'))
-                                st.session_state.verarbeitete_ids.add(mail.get('id')) # NIE WIEDER BEANTWORTEN
+                                # HIER: Dem Google Server Bescheid sagen, dass wir fertig sind!
+                                markiere_als_beantwortet(mail.get('id'))
+                                st.session_state.verarbeitete_ids.add(mail.get('id')) 
                                 c_leads_count += 1
                                 continue 
                                 
@@ -175,7 +174,6 @@ elif st.session_state.aktive_seite == "Email":
         live_radar = st.toggle("📡 Live-Radar")
         st.session_state.live_sync = live_radar
 
-    # --- HINTERGRUND-CHECK FÜR NEUE MAILS ---
     if st.session_state.get("live_sync", False):
         neue_mails = lese_emails()
         if isinstance(neue_mails, list):
@@ -188,7 +186,6 @@ elif st.session_state.aktive_seite == "Email":
                     st.toast(f"📬 Neue Anfrage: {nm['betreff']}", icon="🔔")
                 st.rerun()
 
-    # --- MAILS ANZEIGEN ---
     for mail in st.session_state.posteingang:
         if not isinstance(mail, dict): continue
             
@@ -212,11 +209,17 @@ elif st.session_state.aktive_seite == "Email":
                             if erfolg:
                                 st.success("✅ E-Mail wurde erfolgreich versendet!")
                                 st.session_state.stats["mails"] += 1
-                                st.session_state.verarbeitete_ids.add(m_id) # AUCH HIER SCHUTZ VOR DOPPELSENDUNG
+                                
+                                # HIER: Dem Google Server Bescheid sagen, dass die Mail beantwortet wurde
+                                markiere_als_beantwortet(m_id)
+                                st.session_state.verarbeitete_ids.add(m_id)
+                                
                                 del st.session_state.entwuerfe[m_id]
                                 st.rerun()
                             else:
                                 st.error(f"Fehler beim Senden: {fehlermeldung}")
+                        else:
+                            st.error("Konnte keine gültige E-Mail-Adresse finden.")
 
 elif st.session_state.aktive_seite == "Extraktion":
     st.title("📑 Strukturierte Objektdaten-Extraktion")

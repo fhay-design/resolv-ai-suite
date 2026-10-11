@@ -24,14 +24,15 @@ EMAIL_PASSWORD = hole_zugangsdaten("EMAIL_PASSWORD")
 
 def lese_emails(limit=5):
     if not EMAIL_ACCOUNT or not EMAIL_PASSWORD:
-        return "🚨 Fehler: Zugangsdaten (EMAIL_ACCOUNT / EMAIL_PASSWORD) fehlen!"
+        return "🚨 Fehler: Zugangsdaten fehlen!"
         
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
         mail.select("inbox")
         
-        status, messages = mail.search(None, "ALL")
+        # DER FIX: Wir fragen Google NUR noch nach unbeantworteten Mails!
+        status, messages = mail.search(None, "UNANSWERED")
         if status != "OK": return []
             
         email_ids = messages[0].split()
@@ -51,7 +52,6 @@ def lese_emails(limit=5):
                         
                     from_ = str(msg.get("From"))
                     
-                    # ULTIMATIVER ROBOTER-FILTER
                     from_lower = from_.lower()
                     bots = ["noreply", "no-reply", "daemon", "postmaster", "mailer", "system", "support"]
                     if any(b in from_lower for b in bots):
@@ -103,14 +103,22 @@ def loesche_email(mail_id_str):
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
         mail.select("inbox")
-        # Bei Google Mail explizit das Spam-Label anheften
         try:
             mail.store(mail_id_str.encode('utf-8'), '+X-GM-LABELS', '\\Spam')
         except: pass
-        # Aus der Inbox löschen
         mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Deleted')
         mail.expunge()
         mail.logout()
         return True
-    except Exception as e:
-        return False
+    except: return False
+
+def markiere_als_beantwortet(mail_id_str):
+    """Setzt bei Google direkt einen Haken, dass diese Mail erledigt ist."""
+    try:
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+        mail.select("inbox")
+        mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Answered')
+        mail.logout()
+        return True
+    except: return False
