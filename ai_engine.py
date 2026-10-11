@@ -28,10 +28,11 @@ def transkribiere_audio(audio_bytes):
         completion = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes),
             model="whisper-large-v3",
-            response_format="text",
+            response_format="text", # <- Wir verlangen direkt reinen Text
             language="de"
         )
-        return completion.text
+        # HIER IST DER FIX: completion ist bereits der fertige String, kein Objekt mehr!
+        return completion
     except Exception as e:
         return f"🚨 Fehler bei der Audio-Erkennung: {e}"
 
