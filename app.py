@@ -9,7 +9,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio, qualifiziere_lead
-# HIER NEU: Import der neuen Funktion
 from email_agent import lese_emails, sende_email, loesche_email, markiere_als_beantwortet
 from database import supabase, get_tenant_info
 
@@ -147,7 +146,6 @@ elif st.session_state.aktive_seite == "Email":
                                     sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", absage)
                                 
                                 loesche_email(mail.get('id'))
-                                # HIER: Dem Google Server Bescheid sagen, dass wir fertig sind!
                                 markiere_als_beantwortet(mail.get('id'))
                                 st.session_state.verarbeitete_ids.add(mail.get('id')) 
                                 c_leads_count += 1
@@ -174,6 +172,7 @@ elif st.session_state.aktive_seite == "Email":
         live_radar = st.toggle("📡 Live-Radar")
         st.session_state.live_sync = live_radar
 
+    # --- DER FIX: HINTERGRUND-CHECK (Kein st.rerun mehr nach dem Toast!) ---
     if st.session_state.get("live_sync", False):
         neue_mails = lese_emails()
         if isinstance(neue_mails, list):
@@ -184,7 +183,7 @@ elif st.session_state.aktive_seite == "Email":
                 st.session_state.posteingang = [m for m in neue_mails if m['id'] not in st.session_state.verarbeitete_ids]
                 for nm in wirklich_neue:
                     st.toast(f"📬 Neue Anfrage: {nm['betreff']}", icon="🔔")
-                st.rerun()
+                # HIER WURDE DER BUG BEHOBEN (st.rerun entfernt, das UI updatet sich im nächsten Schritt ohnehin von selbst)
 
     for mail in st.session_state.posteingang:
         if not isinstance(mail, dict): continue
@@ -209,11 +208,8 @@ elif st.session_state.aktive_seite == "Email":
                             if erfolg:
                                 st.success("✅ E-Mail wurde erfolgreich versendet!")
                                 st.session_state.stats["mails"] += 1
-                                
-                                # HIER: Dem Google Server Bescheid sagen, dass die Mail beantwortet wurde
                                 markiere_als_beantwortet(m_id)
                                 st.session_state.verarbeitete_ids.add(m_id)
-                                
                                 del st.session_state.entwuerfe[m_id]
                                 st.rerun()
                             else:
@@ -222,6 +218,7 @@ elif st.session_state.aktive_seite == "Email":
                             st.error("Konnte keine gültige E-Mail-Adresse finden.")
 
 elif st.session_state.aktive_seite == "Extraktion":
+    # (Restlicher Code für die anderen Seiten)
     st.title("📑 Strukturierte Objektdaten-Extraktion")
     ziele = st.text_input("Ziel-Attribute:", "Adresse, Kaufpreis, Wohnfläche, Zimmeranzahl, Baujahr")
     upload = st.file_uploader("PDF hochladen", type="pdf")

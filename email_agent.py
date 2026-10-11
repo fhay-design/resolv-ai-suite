@@ -31,8 +31,8 @@ def lese_emails(limit=5):
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
         mail.select("inbox")
         
-        # DER FIX: Wir fragen Google NUR noch nach unbeantworteten Mails!
-        status, messages = mail.search(None, "UNANSWERED")
+        # FIX: Wir suchen wieder auf "ALL", damit Gmail uns keine Selbstgespräch-Mails verheimlicht.
+        status, messages = mail.search(None, "ALL")
         if status != "OK": return []
             
         email_ids = messages[0].split()
@@ -113,7 +113,6 @@ def loesche_email(mail_id_str):
     except: return False
 
 def markiere_als_beantwortet(mail_id_str):
-    """Setzt bei Google direkt einen Haken, dass diese Mail erledigt ist."""
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
