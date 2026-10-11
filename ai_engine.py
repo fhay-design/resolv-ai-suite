@@ -63,8 +63,9 @@ def qualifiziere_lead(email_text):
             "Antworte AUSSCHLIESSLICH in diesem exakten JSON-Format (nichts anderes!):\n"
             "{\"kategorie\": \"A\", \"label\": \"🟢 A-Lead\", \"begruendung\": \"Sehr hohe Bonität durch...\"}"
         )
+        # HIER IST DER FIX: Stabiles Modell für JSON-Antworten
         res = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": email_text}
