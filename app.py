@@ -7,7 +7,6 @@ from pypdf import PdfReader
 import gspread
 from google.oauth2.service_account import Credentials
 
-# FIX: Importiere die neuen Funktionen sende_email und loesche_email
 from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio, qualifiziere_lead
 from email_agent import lese_emails, sende_email, loesche_email
 from database import supabase, get_tenant_info
@@ -126,20 +125,21 @@ elif st.session_state.aktive_seite == "Email":
                         mail['qualifizierung'] = q
                         kat = q.get("kategorie", "B")
                         
-                        # DEIN KILLER FEATURE: C-LEADS AUTO-REJECT
+                        # C-LEADS AUTO-REJECT (Jetzt freundlich und professionell)
                         if kat == "C":
-                            # 1. Absage verfassen
-                            absage = generiere_antwort("Verfasse eine extrem kurze Standardabsage (Objekt reserviert/nicht passend). Keine Anrede des Namens nötig.", mode="email")
+                            absage_prompt = (
+                                "Schreibe als professioneller Immobilienmakler eine höfliche, respektvolle aber bestimmte Absage. "
+                                "Bedanke dich freundlich für das Interesse an der Immobilie. Erkläre sanft, dass die Vermarktung für dieses Objekt "
+                                "bereits sehr weit fortgeschritten ist und es daher momentan reserviert ist. Wünsche dem Interessenten viel Erfolg "
+                                "bei der weiteren Suche. Nutze eine allgemeine Anrede (z.B. 'Guten Tag') und sei keinesfalls unhöflich oder radikal."
+                            )
+                            absage = generiere_antwort(absage_prompt, mode="email")
                             
-                            # 2. Echte Email extrahieren und Senden
                             match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
                             if match:
                                 sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", absage)
                                 
-                            # 3. Direkt aus dem Postfach (IMAP) löschen
                             loesche_email(mail.get('id'))
-                            
-                            # 4. Zähler hochsetzen und NICHT in die Liste der anzuzeigenden Mails packen!
                             c_leads_count += 1
                             continue 
                             
@@ -154,11 +154,9 @@ elif st.session_state.aktive_seite == "Email":
                             
                     gefilterte_mails.append(mail)
                 
-                # Aktualisiere den Posteingang (C-Leads sind jetzt unsichtbar)
                 st.session_state.posteingang = gefilterte_mails
-                
                 if c_leads_count > 0:
-                    st.success(f"🛡️ Zero-Touch aktiv: {c_leads_count} C-Leads wurden vollautomatisch abgesagt und aus deinem Postfach gelöscht!")
+                    st.success(f"🛡️ Zero-Touch aktiv: {c_leads_count} C-Leads wurden professionell abgesagt und archiviert.")
             st.rerun()
             
     for mail in st.session_state.posteingang:
@@ -176,7 +174,6 @@ elif st.session_state.aktive_seite == "Email":
             if m_id in st.session_state.entwuerfe:
                 entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.entwuerfe[m_id], height=150, key=f"txt_{m_id}")
                 
-                # DER ECHTE SENDEN BUTTON
                 if st.button("🚀 Senden & im CRM loggen", type="primary", key=f"snd_{m_id}"):
                     with st.spinner("Sende E-Mail..."):
                         match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
