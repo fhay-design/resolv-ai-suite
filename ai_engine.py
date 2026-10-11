@@ -17,16 +17,29 @@ def get_tenant_collection(tenant_id):
     safe_tenant_id = str(tenant_id).replace("-", "")
     return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
 
+def transkribiere_audio(audio_bytes):
+    """
+    Nutzt das Whisper-Modell, um Sprachnachrichten in Millisekunden in Text umzuwandeln.
+    """
+    if not audio_bytes:
+        return ""
+    try:
+        # Die API erwartet einen Dateinamen und die Datei-Bytes
+        completion = client.audio.transcriptions.create(
+            file=("audio.wav", audio_bytes),
+            model="whisper-large-v3",
+            response_format="text",
+            language="de"
+        )
+        return completion.text
+    except Exception as e:
+        return f"🚨 Fehler bei der Audio-Erkennung: {e}"
+
 def analysiere_bild(image_bytes, prompt_typ="immo_details"):
-    """
-    Analysiert Bilder strikt faktenbasiert ohne Spekulation.
-    """
     if not image_bytes:
         return ""
-        
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        
         user_prompt = (
             "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, "
             "die auf dem Bild zweifelsfrei sichtbar sind (z. B. Fliesenart, Fensterform, Sanitärobjekte, Deckenhöhe). "
@@ -43,9 +56,7 @@ def analysiere_bild(image_bytes, prompt_typ="immo_details"):
                         {"type": "text", "text": user_prompt},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
                         }
                     ]
                 }
@@ -77,18 +88,17 @@ def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
         temp = 0.0
 
     elif mode == "expose":
-        # DIE ZERO-HALLUCINATION LEITPLANKE:
         system_prompt = (
             "Du bist ein elitärer Immobilien-Copywriter für Luxus- und Anlageobjekte. "
             "Schreibe ein verkaufsstarkes Exposé für ImmobilienScout24 mit den Abschnitten: "
             "🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. "
             "\n"
             "STRIKTE COMPLIANCE-REGELN:\n"
-            "1. Nutze AUSSCHLIESSLICH Fakten, die in den übergebenen Eckdaten oder Bild-Details belegt sind.\n"
+            "1. Nutze AUSSCHLIESSLICH Fakten, die in den übergebenen Eckdaten, Audios oder Bild-Details belegt sind.\n"
             "2. Wenn Bodenbeläge, Heizungsarten, Balkone oder Abstellräume NICHT explizit genannt oder im Bild zu sehen sind, darfst du sie UNTER KEINEN UMSTÄNDEN erwähnen oder erraten.\n"
             "3. Gib AUSSCHLIESSLICH das fertige Exposé zurück. Keine Einleitungs- oder Höflichkeitsfloskeln."
         )
-        temp = 0.3  # Reduziert von 0.7 auf 0.3 für maximale Faktentreue
+        temp = 0.3
 
     elif mode == "video_script":
         system_prompt = (

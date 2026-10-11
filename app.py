@@ -6,7 +6,8 @@ from pypdf import PdfReader
 import gspread
 from google.oauth2.service_account import Credentials
 
-from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild
+# WICHTIG: Die neue Funktion 'transkribiere_audio' ist jetzt hier importiert!
+from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio
 from email_agent import lese_emails
 from database import supabase, get_tenant_info
 
@@ -213,25 +214,44 @@ elif st.session_state.aktive_seite == "Wissen":
             user_collection.upsert(documents=chunks, metadatas=[{"source": upload.name}]*len(chunks), ids=[f"{upload.name}_{i}" for i in range(len(chunks))])
             st.success("Erfolgreich ins Objektwissen integriert.")
 
-# --- DYNAMISCHES KI-IMMOBILIEN-STUDIO (MIT MULTI-BILDER-UPLOAD) ---
+# --- DYNAMISCHES KI-IMMOBILIEN-STUDIO MIT VOICE CONCIERGE ---
 elif st.session_state.aktive_seite == "Content":
     st.title("✨ KI-Immobilien-Studio")
-    st.write("Erstelle aus rohen Eckdaten und Fotos hochkonvertierende Exposés und virale Video-Skripte.")
+    st.write("Erstelle aus rohen Eckdaten, **Sprachnotizen** und Fotos hochkonvertierende Exposés und virale Video-Skripte.")
     
     colA, colB = st.columns([2,1])
-    stichpunkte = colA.text_area("Eckdaten der Immobilie (z.B. 4 Zimmer, Balkon Südseite, saniert 2022, 450.000€, Köln-Lindenthal)", height=100)
     
-    foto_uploads = colA.file_uploader("Optional: Objekt-Fotos zur visuellen Analyse hochladen (Mehrfachauswahl möglich!)", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+    # NEU: Der Audio-Concierge
+    st.markdown("### 🎙️ Voice Concierge (Audio-Notizen)")
+    audio_aufnahme = colA.audio_input("Direkt hier reinsprechen (Handy/Laptop)")
+    audio_upload = colA.file_uploader("Oder WhatsApp-Sprachnachricht hochladen (MP3, WAV, M4A)", type=["mp3", "wav", "m4a"])
     
-    # HIER IST DER NEUE ZÄHLER: Visuelles Feedback für den Nutzer
+    stichpunkte = colA.text_area("Zusätzliche schriftliche Eckdaten (optional, falls du Sprachnotizen nutzt)", height=80)
+    
+    foto_uploads = colA.file_uploader("Optional: Objekt-Fotos zur visuellen Analyse (Mehrfachauswahl möglich!)", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
     if foto_uploads:
         colA.info(f"📸 {len(foto_uploads)} Foto(s) für die Analyse bereit.")
     
     format_typ = colB.selectbox("Was möchtest du erstellen?", ["ImmoScout Exposé", "TikTok / Reel Video-Skript"])
     
-    if st.button("Magie starten ⚡", type="primary") and stichpunkte:
+    if st.button("Magie starten ⚡", type="primary"):
+        daten_basis = stichpunkte
         analyseeffekt = ""
         
+        # 1. AUDIO TRANSKRIBIEREN (Zero Click Ansatz)
+        if audio_aufnahme or audio_upload:
+            with st.spinner("🎙️ Voice-KI wandelt deine Sprache in Text um..."):
+                audio_datei = audio_aufnahme if audio_aufnahme else audio_upload
+                audio_bytes = audio_datei.read()
+                
+                transkript = transkribiere_audio(audio_bytes)
+                st.success("Audio transkribiert!")
+                st.info(f"**Die KI hat gehört:** {transkript}")
+                
+                # Das Gesprochene zu den Basis-Daten hinzufügen
+                daten_basis += f"\n\n[GESPROCHENE FAKTEN DES MAKLERS]:\n{transkript}"
+                
+        # 2. BILDER ANALYSIEREN
         if foto_uploads:
             with st.spinner(f"📸 Vision-KI analysiert {len(foto_uploads)} Fotos..."):
                 alle_details = []
@@ -244,21 +264,26 @@ elif st.session_state.aktive_seite == "Content":
                 analyseeffekt = f"\n\n[WICHTIGE VISUELLE DETAILS AUS DEN FOTOS]:\n{kombinierte_details}"
                 st.toast(f"Vision-KI hat {len(foto_uploads)} Bilder erfolgreich gescannt!", icon="👁️")
                 
-        with st.spinner("✍️ KI webt visuelle Details in Premium-Content ein..."):
-            modus = "expose" if format_typ == "ImmoScout Exposé" else "video_script"
-            prompt = f"Erstelle ein {format_typ} basierend auf diesen Daten: {stichpunkte}. {analyseeffekt}"
-            
-            antwort = generiere_antwort(prompt, mode=modus)
-            st.markdown("### Dein Premium Ergebnis:")
-            st.info(antwort)
-            st.session_state.stats["content"] += 1
-            
-            st.write("---")
-            colX, colY = st.columns(2)
-            if colX.button("Publish to Instagram / TikTok 🚀", use_container_width=True):
-                st.success("✅ Content wurde erfolgreich zur Freigabe für Social Media vorgemerkt!")
-            if colY.button("Direkt an CRM übergeben (onOffice) 🔗", use_container_width=True):
-                st.success("✅ Inserat-Veredelung an onOffice / FlowFact API übertragen!")
+        # 3. KONTROLL-CHECK
+        if not daten_basis.strip() and not analyseeffekt.strip():
+            st.error("⚠️ Bitte gib ein paar schriftliche Eckdaten ein, lade ein Bild hoch oder nutze das Mikrofon!")
+        else:
+            # 4. CONTENT GENERIEREN
+            with st.spinner("✍️ KI webt alle Fakten (Audio & Bild) in Premium-Content ein..."):
+                modus = "expose" if format_typ == "ImmoScout Exposé" else "video_script"
+                prompt = f"Erstelle ein {format_typ} basierend auf diesen Daten: {daten_basis}. {analyseeffekt}"
+                
+                antwort = generiere_antwort(prompt, mode=modus)
+                st.markdown("### Dein Premium Ergebnis:")
+                st.info(antwort)
+                st.session_state.stats["content"] += 1
+                
+                st.write("---")
+                colX, colY = st.columns(2)
+                if colX.button("Publish to Instagram / TikTok 🚀", use_container_width=True):
+                    st.success("✅ Content wurde erfolgreich zur Freigabe für Social Media vorgemerkt!")
+                if colY.button("Direkt an CRM übergeben (onOffice) 🔗", use_container_width=True):
+                    st.success("✅ Inserat-Veredelung an onOffice / FlowFact API übertragen!")
 
 elif st.session_state.aktive_seite == "Settings":
     st.title("⚙️ Einstellungen")
