@@ -1,59 +1,25 @@
-import os
-import imaplib
-import email
-from email.header import decode_header
-from dotenv import load_dotenv
-
-# Lade die Umgebungsvariablen
-load_dotenv()
-email_adresse = os.getenv("EMAIL_ADRESSE")
-email_passwort = os.getenv("EMAIL_PASSWORT")
-imap_server = os.getenv("IMAP_SERVER")
-
 def lese_emails():
     """
-    Verbindet sich mit dem Postfach, ruft die neuesten E-Mails ab 
-    und extrahiert Betreff, Absender und Textkörper.
+    Simuliert den Posteingang eines Maklers mit 3 typischen Anfragen 
+    (A-Lead, C-Lead/Spam, B-Lead), perfekt für die Live-Demo.
     """
-    try:
-        mail = imaplib.IMAP4_SSL(imap_server)
-        mail.login(email_adresse, email_passwort)
-        mail.select("inbox")
-        status, messages = mail.search(None, "ALL")
-        
-        if not messages[0]: 
-            return []
-            
-        email_ids = messages[0].split()[-3:] # Lädt die letzten 3 Mails
-        gefundene_emails = []
-        
-        for e_id in reversed(email_ids):
-            res, msg_data = mail.fetch(e_id, "(RFC822)")
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes): 
-                        subject = subject.decode(encoding or "utf-8", errors="ignore")
-                    
-                    sender = msg.get("From")
-                    body = ""
-                    
-                    if msg.is_multipart():
-                        for p in msg.walk():
-                            if p.get_content_type() == "text/plain":
-                                body = p.get_payload(decode=True).decode("utf-8", errors="ignore")
-                                break
-                    else: 
-                        body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
-                        
-                    gefundene_emails.append({
-                        "id": e_id.decode(), 
-                        "absender": sender, 
-                        "betreff": subject, 
-                        "text": body[:1500]
-                    })
-        mail.logout()
-        return gefundene_emails
-    except Exception as e: 
-        return str(e)
+    return [
+        {
+            "id": "mail_1",
+            "absender": "dr.m.weber@klinikum-nrw.de",
+            "betreff": "Kaufinteresse: 3-Zimmer Wohnung Opladen",
+            "text": "Sehr geehrte Damen und Herren, meine Frau und ich (beide Fachärzte) interessieren uns sehr für das Objekt. Eine Finanzierungsbestätigung unserer Hausbank über 500.000 € liegt uns bereits vor. Wir könnten jederzeit besichtigen. MfG Dr. Weber"
+        },
+        {
+            "id": "mail_2",
+            "absender": "kevin_xy99@gmx.de",
+            "betreff": "wohnung",
+            "text": "hallo ist die noch da? was letzte preis? bitte anrufen 0176..."
+        },
+        {
+            "id": "mail_3",
+            "absender": "s.mueller@gmail.com",
+            "betreff": "Besichtigung",
+            "text": "Guten Tag, die Wohnung sieht toll aus. Ich bin unbefristet angestellt (Netto ca. 2.400€). Wäre die Wohnung auch für mich und meine zwei kleinen Hunde geeignet? Freue mich auf Rückmeldung."
+        }
+    ]

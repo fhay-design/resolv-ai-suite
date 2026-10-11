@@ -1,5 +1,6 @@
 import os
 import base64
+import json
 from groq import Groq
 import chromadb
 from dotenv import load_dotenv
@@ -18,123 +19,94 @@ def get_tenant_collection(tenant_id):
     return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
 
 def transkribiere_audio(audio_bytes):
-    """
-    Nutzt das Whisper-Modell, um Sprachnachrichten in Millisekunden in Text umzuwandeln.
-    """
-    if not audio_bytes:
-        return ""
+    if not audio_bytes: return ""
     try:
-        # Die API erwartet einen Dateinamen und die Datei-Bytes
         completion = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes),
             model="whisper-large-v3",
-            response_format="text", # <- Wir verlangen direkt reinen Text
+            response_format="text",
             language="de"
         )
-        # HIER IST DER FIX: completion ist bereits der fertige String, kein Objekt mehr!
         return completion
     except Exception as e:
         return f"🚨 Fehler bei der Audio-Erkennung: {e}"
 
 def analysiere_bild(image_bytes, prompt_typ="immo_details"):
-    if not image_bytes:
-        return ""
+    if not image_bytes: return ""
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        user_prompt = (
-            "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, "
-            "die auf dem Bild zweifelsfrei sichtbar sind (z. B. Fliesenart, Fensterform, Sanitärobjekte, Deckenhöhe). "
-            "Erfinde KEINE Räume, Materialien oder Zustände, die verdeckt oder nicht im Bildausschnitt sind. "
-            "Gib eine stichpunktartige Liste sichtbarer Fakten zurück."
-        )
+        user_prompt = "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, die auf dem Bild zweifelsfrei sichtbar sind. Erfinde KEINE Räume oder Zustände, die verdeckt sind. Gib eine stichpunktartige Liste sichtbarer Fakten zurück."
 
         response = client.chat.completions.create(
             model="llama-3.2-90b-vision-preview",
             messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                        }
-                    ]
-                }
+                {"role": "user", "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]}
             ],
-            temperature=0.1,
-            max_tokens=800
+            temperature=0.1, max_tokens=800
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"🚨 Bild-Analysefehler: {e}"
+
+def qualifiziere_lead(email_text):
+    """Scannt Mails und kategorisiert sie als A, B oder C-Lead für Makler."""
+    if not email_text: return None
+    try:
+        system_prompt = (
+            "Du bist ein analytischer Immobilien-Lead-Filter. Bewerte diese Anfrage strikt:\n"
+            "- A-Lead: Finanzierung/Eigenkapital ist geklärt, hohe Bonität (z.B. Ärzte, Beamte, gutverdiener), sehr seriös.\n"
+            "- B-Lead: Potenzial vorhanden, aber wichtige Infos (Gehaltsnachweis) fehlen oder Tiere sind dabei.\n"
+            "- C-Lead: Unseriös, Spam, 'letzte Preis', extrem kurze Sätze.\n\n"
+            "Antworte AUSSCHLIESSLICH in diesem exakten JSON-Format (nichts anderes!):\n"
+            "{\"kategorie\": \"A\", \"label\": \"🟢 A-Lead\", \"begruendung\": \"Sehr hohe Bonität durch...\"}"
+        )
+        res = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": email_text}
+            ],
+            temperature=0.1, max_tokens=200
+        )
+        raw = res.choices[0].message.content
+        clean_json = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_json)
+    except Exception as e:
+        return {"kategorie": "B", "label": "⚪ Unbekannt", "begruendung": f"Fehler: {e}"}
 
 def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
     if history is None: history = []
     fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
     
     if mode == "email":
-        system_prompt = (
-            "Du bist ein Immobilien-Assistent auf Enterprise-Niveau. Beantworte Kundenanfragen präzise, "
-            "höflich und verbindlich. Nutze keine Markdown-Sternchen (**) oder Rauten (#). "
-            "Halte dich strikt an vorhandene Objektfakten."
-        )
+        system_prompt = "Du bist ein Immobilien-Assistent auf Enterprise-Niveau. Beantworte Kundenanfragen präzise, höflich und verbindlich. Nutze keine Markdown-Sternchen."
         temp = 0.2
-
     elif mode == "extract":
-        system_prompt = (
-            "Du bist ein Enterprise-Datenextraktor. Extrahiere Objektmerkmale in valides JSON. "
-            "Keine Erklärungen, kein Markdown-Wrapper, nur valides JSON."
-        )
+        system_prompt = "Du bist ein Enterprise-Datenextraktor. Extrahiere Objektmerkmale in valides JSON."
         temp = 0.0
-
     elif mode == "expose":
-        system_prompt = (
-            "Du bist ein elitärer Immobilien-Copywriter für Luxus- und Anlageobjekte. "
-            "Schreibe ein verkaufsstarkes Exposé für ImmobilienScout24 mit den Abschnitten: "
-            "🌟 Highlight, 🏡 Beschreibung, 🛋️ Ausstattung, 📍 Lage. "
-            "\n"
-            "STRIKTE COMPLIANCE-REGELN:\n"
-            "1. Nutze AUSSCHLIESSLICH Fakten, die in den übergebenen Eckdaten, Audios oder Bild-Details belegt sind.\n"
-            "2. Wenn Bodenbeläge, Heizungsarten, Balkone oder Abstellräume NICHT explizit genannt oder im Bild zu sehen sind, darfst du sie UNTER KEINEN UMSTÄNDEN erwähnen oder erraten.\n"
-            "3. Gib AUSSCHLIESSLICH das fertige Exposé zurück. Keine Einleitungs- oder Höflichkeitsfloskeln."
-        )
+        system_prompt = "Du bist ein elitärer Immobilien-Copywriter. Schreibe Exposés. STRIKTE REGEL: Nutze AUSSCHLIESSLICH belegte Fakten. Erfinde nichts."
         temp = 0.3
-
     elif mode == "video_script":
-        system_prompt = (
-            "Du bist ein Social-Media-Producer für Immobilienmakler. Schreibe ein 45-Sekunden-Skript für Instagram Reels. "
-            "Gliedere in [Visuell/Kamera] und [Audio/Sprecher]. Starte mit einer messerscharfen Hook. "
-            "Erwähne nur belegte Fakten. Gib AUSSCHLIESSLICH das Skript zurück."
-        )
+        system_prompt = "Du bist ein Social-Media-Producer. Schreibe ein 45-Sekunden-Skript. Erwähne nur belegte Fakten."
         temp = 0.4
-
     else:
-        system_prompt = "Du bist RESOLV.AI Core. Ein hochgradig effizienter, präziser B2B-Berater für Immobilienunternehmen."
+        system_prompt = "Du bist RESOLV.AI Core. Ein präziser B2B-Berater."
         temp = 0.4
         
-    if kontext: 
-        system_prompt += f"\n\nObjekt- und Firmenwissen:\n{kontext}"
+    if kontext: system_prompt += f"\n\nObjekt- und Firmenwissen:\n{kontext}"
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history[-5:]: messages.append(msg)
     messages.append({"role": "user", "content": prompt})
 
-    fehler_log = []
     for model in fallback_chain:
         try:
-            res = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temp,
-                max_tokens=2500
-            )
-            antwort_text = res.choices[0].message.content
-            if mode == "email":
-                antwort_text = antwort_text.replace("**", "").replace("*", "").replace("###", "").replace("##", "")
-            return antwort_text
-        except Exception as e:
-            fehler_log.append(f"{model}: {e}")
+            res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
+            return res.choices[0].message.content.replace("**", "") if mode == "email" else res.choices[0].message.content
+        except Exception:
             continue
-            
-    return f"🚨 Systemausfall. Log: {fehler_log}"
+    return "🚨 Systemausfall."
