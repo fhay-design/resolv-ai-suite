@@ -100,8 +100,14 @@ elif st.session_state.aktive_seite == "Email":
     col1, col2 = st.columns(2)
     if col1.button("📥 Mails abrufen", type="primary"):
         with st.spinner("Lade Anfragen..."):
-            st.session_state.posteingang = lese_emails()
-            st.success("Postfach aktualisiert.")
+            res = lese_emails()
+            # HIER IST DER FIX: Die App crasht nicht mehr bei Fehlern, sondern warnt dich.
+            if isinstance(res, str):
+                st.error(res)
+                st.session_state.posteingang = []
+            else:
+                st.session_state.posteingang = res
+                st.success("Postfach aktualisiert.")
             
     if col2.button("⚡ KI-Qualifizierung & Auto-Antworten starten", type="primary"):
         if not st.session_state.posteingang:
@@ -109,12 +115,11 @@ elif st.session_state.aktive_seite == "Email":
         else:
             with st.spinner("Scanne auf Top-Käufer & formuliere Antworten..."):
                 for mail in st.session_state.posteingang:
-                    q = qualifiziere_lead(mail['text'])
+                    q = qualifiziere_lead(mail.get('text', ''))
                     if q:
                         mail['qualifizierung'] = q
                         kat = q.get("kategorie", "B")
                         
-                        # Magie: Die KI entscheidet selbst, wie geantwortet wird!
                         if kat == "A":
                             anweisung = "Top-Lead. Bedanke dich extrem freundlich für den Finanzierungsnachweis und schlage zwei Termine für nächste Woche vor."
                         elif kat == "C":
@@ -122,25 +127,24 @@ elif st.session_state.aktive_seite == "Email":
                         else:
                             anweisung = "Bedanke dich für das Interesse, fordere aber höflich eine Vorab-Selbstauskunft an, bevor wir Termine machen."
                             
-                        prompt = f"Schreibe als Makler eine Antwort auf diese Mail. ANWEISUNG: {anweisung}\n\nKundenmail: {mail['text']}"
-                        st.session_state.entwuerfe[mail['id']] = generiere_antwort(prompt, mode="email")
+                        prompt = f"Schreibe als Makler eine Antwort auf diese Mail. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
+                        st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
             st.rerun()
             
     for mail in st.session_state.posteingang:
-        m_id = mail['id']
+        m_id = mail.get('id', 'unbekannt')
         ist_offen = m_id in st.session_state.entwuerfe
         
-        # Visuelles Label im Postfach
         badge = ""
         if "qualifizierung" in mail:
             badge = f" | {mail['qualifizierung'].get('label', '')}"
             
-        with st.expander(f"✉️ {mail['betreff']}{badge}", expanded=ist_offen):
+        with st.expander(f"✉️ {mail.get('betreff', 'Kein Betreff')}{badge}", expanded=ist_offen):
             if "qualifizierung" in mail:
                 st.info(f"**🧠 KI-Analyse:** {mail['qualifizierung'].get('begruendung', '')}")
                 
-            st.write(f"**Von:** {mail['absender']}")
-            st.write(f"**Nachricht:** {mail['text']}")
+            st.write(f"**Von:** {mail.get('absender', 'Unbekannt')}")
+            st.write(f"**Nachricht:** {mail.get('text', '')}")
             
             if m_id in st.session_state.entwuerfe:
                 entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.entwuerfe[m_id], height=150, key=f"txt_{m_id}")
@@ -217,4 +221,3 @@ elif st.session_state.aktive_seite == "Settings":
             supabase.table("tenants").update({"google_sheet_url": neue}).eq("user_id", st.session_state.user.id).execute()
             st.session_state.tenant_data['google_sheet_url'] = neue
             st.success("Gespeichert!")
-# Force Cache Reset
