@@ -1,13 +1,15 @@
 import os
 import json
+import re
 import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
 import gspread
 from google.oauth2.service_account import Credentials
 
+# FIX: Importiere die neuen Funktionen sende_email und loesche_email
 from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio, qualifiziere_lead
-from email_agent import lese_emails
+from email_agent import lese_emails, sende_email, loesche_email
 from database import supabase, get_tenant_info
 
 # --- 1. SETUP & SESSION STATES ---
@@ -42,7 +44,7 @@ if not st.session_state.logged_in:
                         st.session_state.tenant_data = get_tenant_info(res.user.id)
                         st.session_state.logged_in = True
                         st.rerun()
-                    except Exception as e: st.error("Login fehlgeschlagen.")
+                    except Exception: st.error("Login fehlgeschlagen.")
                         
         with tab2:
             with st.form("register_form"):
@@ -92,7 +94,7 @@ if st.session_state.aktive_seite == "Dashboard":
     c4.metric("Exposés", st.session_state.stats["content"])
     c5.metric("ROI", f"{eingesparte_zeit} Min.")
 
-# --- DAS NEUE SPEED-TO-LEAD POSTFACH ---
+# --- DAS NEUE ZERO-TOUCH POSTFACH ---
 elif st.session_state.aktive_seite == "Email":
     st.title("📧 Speed-to-Lead Postfach")
     st.write("Die KI scannt alle Anfragen und qualifiziert Käufer vollautomatisch.")
@@ -112,52 +114,83 @@ elif st.session_state.aktive_seite == "Email":
         if not st.session_state.posteingang:
             st.warning("Bitte lade erst die Mails ab!")
         else:
-            with st.spinner("Scanne auf Top-Käufer & formuliere Antworten..."):
+            with st.spinner("Scanne auf Top-Käufer, vernichte Spam & formuliere Antworten..."):
+                gefilterte_mails = []
+                c_leads_count = 0
+                
                 for mail in st.session_state.posteingang:
-                    if not isinstance(mail, dict): continue # Ghost-Session Fix
+                    if not isinstance(mail, dict): continue
                     
                     q = qualifiziere_lead(mail.get('text', ''))
                     if q:
                         mail['qualifizierung'] = q
                         kat = q.get("kategorie", "B")
                         
-                        if kat == "A":
-                            anweisung = "Top-Lead. Bedanke dich extrem freundlich für den Finanzierungsnachweis und schlage zwei Termine für nächste Woche vor."
-                        elif kat == "C":
-                            anweisung = "Spam-Lead. Verfasse eine sehr kurze, kühle Standardabsage (Objekt ist angeblich reserviert)."
-                        else:
-                            anweisung = "Bedanke dich für das Interesse, fordere aber höflich eine Vorab-Selbstauskunft an, bevor wir Termine machen."
+                        # DEIN KILLER FEATURE: C-LEADS AUTO-REJECT
+                        if kat == "C":
+                            # 1. Absage verfassen
+                            absage = generiere_antwort("Verfasse eine extrem kurze Standardabsage (Objekt reserviert/nicht passend). Keine Anrede des Namens nötig.", mode="email")
                             
-                        prompt = f"Schreibe als Makler eine Antwort auf diese Mail. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
-                        st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
+                            # 2. Echte Email extrahieren und Senden
+                            match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
+                            if match:
+                                sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", absage)
+                                
+                            # 3. Direkt aus dem Postfach (IMAP) löschen
+                            loesche_email(mail.get('id'))
+                            
+                            # 4. Zähler hochsetzen und NICHT in die Liste der anzuzeigenden Mails packen!
+                            c_leads_count += 1
+                            continue 
+                            
+                        elif kat == "A":
+                            anweisung = "Top-Lead. Bedanke dich extrem freundlich für den Finanzierungsnachweis und schlage zwei Termine für nächste Woche vor."
+                            prompt = f"Schreibe als Makler eine Antwort auf diese Mail. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
+                            st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
+                        else:
+                            anweisung = "Bedanke dich für das Interesse, fordere aber höflich eine Vorab-Selbstauskunft an."
+                            prompt = f"Schreibe als Makler eine Antwort auf diese Mail. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
+                            st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
+                            
+                    gefilterte_mails.append(mail)
+                
+                # Aktualisiere den Posteingang (C-Leads sind jetzt unsichtbar)
+                st.session_state.posteingang = gefilterte_mails
+                
+                if c_leads_count > 0:
+                    st.success(f"🛡️ Zero-Touch aktiv: {c_leads_count} C-Leads wurden vollautomatisch abgesagt und aus deinem Postfach gelöscht!")
             st.rerun()
             
     for mail in st.session_state.posteingang:
-        # HIER IST DER FIX: Wir ignorieren alte Text-Strings im Speicher
-        if not isinstance(mail, dict):
-            continue
+        if not isinstance(mail, dict): continue
             
         m_id = mail.get('id', 'unbekannt')
         ist_offen = m_id in st.session_state.entwuerfe
-        
-        badge = ""
-        if "qualifizierung" in mail:
-            badge = f" | {mail['qualifizierung'].get('label', '')}"
+        badge = f" | {mail['qualifizierung'].get('label', '')}" if "qualifizierung" in mail else ""
             
         with st.expander(f"✉️ {mail.get('betreff', 'Kein Betreff')}{badge}", expanded=ist_offen):
-            if "qualifizierung" in mail:
-                st.info(f"**🧠 KI-Analyse:** {mail['qualifizierung'].get('begruendung', '')}")
-                
+            if "qualifizierung" in mail: st.info(f"**🧠 KI-Analyse:** {mail['qualifizierung'].get('begruendung', '')}")
             st.write(f"**Von:** {mail.get('absender', 'Unbekannt')}")
             st.write(f"**Nachricht:** {mail.get('text', '')}")
             
             if m_id in st.session_state.entwuerfe:
                 entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.entwuerfe[m_id], height=150, key=f"txt_{m_id}")
+                
+                # DER ECHTE SENDEN BUTTON
                 if st.button("🚀 Senden & im CRM loggen", type="primary", key=f"snd_{m_id}"):
-                    st.success("Wurde versendet und im CRM protokolliert!")
-                    st.session_state.stats["mails"] += 1
-                    del st.session_state.entwuerfe[m_id]
-                    st.rerun()
+                    with st.spinner("Sende E-Mail..."):
+                        match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
+                        if match:
+                            erfolg, fehlermeldung = sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", entwurf)
+                            if erfolg:
+                                st.success("✅ E-Mail wurde erfolgreich versendet!")
+                                st.session_state.stats["mails"] += 1
+                                del st.session_state.entwuerfe[m_id]
+                                st.rerun()
+                            else:
+                                st.error(f"Fehler beim Senden: {fehlermeldung}")
+                        else:
+                            st.error("Konnte keine gültige E-Mail-Adresse des Absenders finden.")
 
 elif st.session_state.aktive_seite == "Extraktion":
     st.title("📑 Strukturierte Objektdaten-Extraktion")

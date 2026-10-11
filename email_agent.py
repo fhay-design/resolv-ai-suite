@@ -1,13 +1,15 @@
 import imaplib
+import smtplib
 import email
 from email.header import decode_header
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# HIER IST DER FIX: Wir nutzen den offiziellen Streamlit-Weg für die Cloud
 def hole_zugangsdaten(schluessel, default=None):
     try:
         return st.secrets[schluessel]
@@ -15,15 +17,14 @@ def hole_zugangsdaten(schluessel, default=None):
         return os.getenv(schluessel, default)
 
 IMAP_SERVER = hole_zugangsdaten("IMAP_SERVER", "imap.gmail.com")
+SMTP_SERVER = hole_zugangsdaten("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(hole_zugangsdaten("SMTP_PORT", 587))
 EMAIL_ACCOUNT = hole_zugangsdaten("EMAIL_ACCOUNT")
 EMAIL_PASSWORD = hole_zugangsdaten("EMAIL_PASSWORD")
 
 def lese_emails(limit=5):
-    """
-    Verbindet sich über IMAP mit einem echten Postfach und lädt die neuesten Mails herunter.
-    """
     if not EMAIL_ACCOUNT or not EMAIL_PASSWORD:
-        return "🚨 Fehler: Zugangsdaten (EMAIL_ACCOUNT / EMAIL_PASSWORD) fehlen in den Streamlit Secrets!"
+        return "🚨 Fehler: Zugangsdaten (EMAIL_ACCOUNT / EMAIL_PASSWORD) fehlen!"
         
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -31,15 +32,13 @@ def lese_emails(limit=5):
         mail.select("inbox")
         
         status, messages = mail.search(None, "ALL")
-        if status != "OK":
-            return []
+        if status != "OK": return []
             
         email_ids = messages[0].split()
         latest_ids = email_ids[-limit:]
         latest_ids.reverse()
         
         posteingang = []
-        
         for m_id in latest_ids:
             res, msg_data = mail.fetch(m_id, "(RFC822)")
             for response_part in msg_data:
@@ -51,7 +50,6 @@ def lese_emails(limit=5):
                         subject = subject.decode(encoding if encoding else "utf-8", errors='ignore')
                         
                     from_ = msg.get("From")
-                    
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -59,13 +57,10 @@ def lese_emails(limit=5):
                                 try:
                                     body = part.get_payload(decode=True).decode(errors='ignore')
                                     break
-                                except:
-                                    pass
+                                except: pass
                     else:
-                        try:
-                            body = msg.get_payload(decode=True).decode(errors='ignore')
-                        except:
-                            body = msg.get_payload()
+                        try: body = msg.get_payload(decode=True).decode(errors='ignore')
+                        except: body = msg.get_payload()
                             
                     posteingang.append({
                         "id": m_id.decode("utf-8"),
@@ -73,9 +68,39 @@ def lese_emails(limit=5):
                         "betreff": str(subject),
                         "text": str(body).strip()[:1500]
                     })
-        
         mail.logout()
         return posteingang
-        
     except Exception as e:
         return f"🚨 IMAP Verbindungsfehler: {e}"
+
+def sende_email(empfaenger, betreff, text):
+    """Sendet eine echte E-Mail über den SMTP Server."""
+    if not EMAIL_ACCOUNT or not EMAIL_PASSWORD: return False, "Keine Zugangsdaten"
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_ACCOUNT
+        msg['To'] = empfaenger
+        msg['Subject'] = betreff
+        msg.attach(MIMEText(text, 'plain'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True, "Gesendet"
+    except Exception as e:
+        return False, str(e)
+
+def loesche_email(mail_id_str):
+    """Verschiebt eine E-Mail direkt in den Papierkorb/Spam (Flag: Deleted)."""
+    try:
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+        mail.select("inbox")
+        mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Deleted')
+        mail.expunge() # Endgültig aus der Inbox entfernen
+        mail.logout()
+        return True
+    except Exception as e:
+        return False
