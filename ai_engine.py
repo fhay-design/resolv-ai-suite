@@ -37,6 +37,7 @@ def analysiere_bild(image_bytes, prompt_typ="immo_details"):
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         user_prompt = "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, die auf dem Bild zweifelsfrei sichtbar sind. Erfinde KEINE Räume oder Zustände, die verdeckt sind. Gib eine stichpunktartige Liste sichtbarer Fakten zurück."
 
+        # Hinweis: Sollte dieses Vision-Modell später auch 404 werfen, müssen wir es anpassen.
         response = client.chat.completions.create(
             model="llama-3.2-90b-vision-preview",
             messages=[
@@ -63,9 +64,9 @@ def qualifiziere_lead(email_text):
             "Antworte AUSSCHLIESSLICH in diesem exakten JSON-Format (nichts anderes!):\n"
             "{\"kategorie\": \"A\", \"label\": \"🟢 A-Lead\", \"begruendung\": \"Sehr hohe Bonität durch...\"}"
         )
-        # HIER IST DER FIX: Stabiles Modell für JSON-Antworten
+        # HIER IST DER FIX: Wir nutzen das ausgelesene, verifizierte Qwen-Modell
         res = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="qwen/qwen3.8-27b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": email_text}
