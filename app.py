@@ -5,11 +5,9 @@ import time
 import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
-import gspread
-from google.oauth2.service_account import Credentials
 
-from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio, qualifiziere_lead
-from email_agent import lese_emails, sende_email, loesche_email, markiere_als_beantwortet
+from ai_engine import generiere_antwort, get_tenant_collection, analysiere_bild, transkribiere_audio
+from email_agent import sende_email
 from database import supabase, get_tenant_info
 
 # --- 1. SETUP & SESSION STATES ---
@@ -19,12 +17,9 @@ if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "user" not in st.session_state: st.session_state.user = None
 if "tenant_data" not in st.session_state: st.session_state.tenant_data = None
 if "aktive_seite" not in st.session_state: st.session_state.aktive_seite = "Dashboard"
-if "chat_verlauf" not in st.session_state: st.session_state.chat_verlauf = []
-if "posteingang" not in st.session_state: st.session_state.posteingang = []
-if "entwuerfe" not in st.session_state: st.session_state.entwuerfe = {}
 if "extrahierte_daten" not in st.session_state: st.session_state.extrahierte_daten = None
 if "stats" not in st.session_state: st.session_state.stats = {"mails": 0, "extraktionen": 0, "content": 0}
-if "verarbeitete_ids" not in st.session_state: st.session_state.verarbeitete_ids = set()
+if "edits" not in st.session_state: st.session_state.edits = {}
 
 # --- 2. LOGIN & REGISTRIERUNG ---
 if not st.session_state.logged_in:
@@ -62,10 +57,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 user_collection = get_tenant_collection(st.session_state.user.id)
+firma = st.session_state.tenant_data.get('company_name', 'RESOLV.AI') if st.session_state.tenant_data else "RESOLV.AI"
 
 # --- 3. SIDEBAR ---
 with st.sidebar:
-    firma = st.session_state.tenant_data.get('company_name', 'Unbekannt') if st.session_state.tenant_data else "Unbekannt"
     st.markdown(f"## 🏡 RESOLV.AI\n**🏢 {firma}**")
     st.markdown("---")
     nav_btn = lambda icon, text, target: st.button(f"{icon} {text}", use_container_width=True, type="primary" if st.session_state.aktive_seite == target else "secondary")
@@ -96,129 +91,57 @@ if st.session_state.aktive_seite == "Dashboard":
     c5.metric("ROI", f"{eingesparte_zeit} Min.")
 
 elif st.session_state.aktive_seite == "Email":
+    # DAS IST DIE NEUE, SCHNELLE UI OHNE LADEZEITEN
     st.title("📧 Speed-to-Lead Postfach")
-    st.write("Die KI scannt alle Anfragen und qualifiziert Käufer vollautomatisch.")
+    st.write("Die KI qualifiziert im Hintergrund (24/7). Hier siehst du nur die wertvollen Leads, die deine Freigabe brauchen.")
     
-    col1, col2, col3 = st.columns([1.5, 2, 1])
-    
-    with col1:
-        if st.button("📥 Mails abrufen", type="primary", use_container_width=True):
-            with st.spinner("Lade Anfragen..."):
-                res = lese_emails()
-                if isinstance(res, str):
-                    st.error(res)
-                    st.session_state.posteingang = []
-                else:
-                    st.session_state.posteingang = [m for m in res if m['id'] not in st.session_state.verarbeitete_ids]
-                    st.success("Postfach aktualisiert.")
-                    
-    with col2:
-        if st.button("⚡ KI-Qualifizierung starten", type="primary", use_container_width=True):
-            if not st.session_state.posteingang:
-                st.warning("Bitte lade erst die Mails ab!")
-            else:
-                with st.spinner("Scanne auf Top-Käufer, vernichte Spam & formuliere Antworten..."):
-                    gefilterte_mails = []
-                    c_leads_count = 0
-                    
-                    for mail in st.session_state.posteingang:
-                        if not isinstance(mail, dict): continue
-                        if mail.get('id') in st.session_state.verarbeitete_ids: continue
-                        
-                        q = qualifiziere_lead(mail.get('text', ''))
-                        if q:
-                            mail['qualifizierung'] = q
-                            kat = q.get("kategorie", "B")
-                            
-                            if kat == "C":
-                                absage = (
-                                    "Sehr geehrte Damen und Herren,\n\n"
-                                    "vielen Dank für Ihr Interesse an der angefragten Immobilie.\n\n"
-                                    "Da die Vermarktung für dieses Objekt bereits sehr weit fortgeschritten ist, "
-                                    "müssen wir Ihnen heute leider mitteilen, dass die Immobilie bereits vergeben ist.\n\n"
-                                    "Wir bitten um Ihr Verständnis und wünschen Ihnen für die weitere Wohnungssuche "
-                                    "alles Gute und viel Erfolg.\n\n"
-                                    "Mit freundlichen Grüßen\n"
-                                    "Ihr Makler-Team"
-                                )
-                                match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
-                                if match:
-                                    sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", absage)
-                                
-                                loesche_email(mail.get('id'))
-                                markiere_als_beantwortet(mail.get('id'))
-                                st.session_state.verarbeitete_ids.add(mail.get('id')) 
-                                c_leads_count += 1
-                                continue 
-                                
-                            elif kat == "A":
-                                anweisung = "Top-Lead. Bedanke dich extrem freundlich für den Nachweis und schlage Termine vor."
-                                prompt = f"Schreibe als Makler eine Antwort. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
-                                st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
-                            else:
-                                anweisung = "Bedanke dich, fordere aber höflich eine Vorab-Selbstauskunft an."
-                                prompt = f"Schreibe als Makler eine Antwort. ANWEISUNG: {anweisung}\n\nKundenmail: {mail.get('text', '')}"
-                                st.session_state.entwuerfe[mail.get('id')] = generiere_antwort(prompt, mode="email")
-                                
-                        gefilterte_mails.append(mail)
-                    
-                    st.session_state.posteingang = gefilterte_mails
-                    if c_leads_count > 0:
-                        st.success(f"🛡️ Zero-Touch aktiv: {c_leads_count} C-Leads höflich abgesagt und in den Spam verschoben.")
-                st.rerun()
-
-    with col3:
-        st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
-        live_radar = st.toggle("📡 Live-Radar")
+    c1, c2 = st.columns([4, 1])
+    with c2:
+        live_radar = st.toggle("📡 Live-Radar", value=st.session_state.get("live_sync", False))
         st.session_state.live_sync = live_radar
 
-    # --- DER FIX: HINTERGRUND-CHECK (Kein st.rerun mehr nach dem Toast!) ---
-    if st.session_state.get("live_sync", False):
-        neue_mails = lese_emails()
-        if isinstance(neue_mails, list):
-            bekannte_ids = [m['id'] for m in st.session_state.posteingang] if st.session_state.posteingang else []
-            wirklich_neue = [m for m in neue_mails if m['id'] not in bekannte_ids and m['id'] not in st.session_state.verarbeitete_ids]
-            
-            if wirklich_neue:
-                st.session_state.posteingang = [m for m in neue_mails if m['id'] not in st.session_state.verarbeitete_ids]
-                for nm in wirklich_neue:
-                    st.toast(f"📬 Neue Anfrage: {nm['betreff']}", icon="🔔")
-                # HIER WURDE DER BUG BEHOBEN (st.rerun entfernt, das UI updatet sich im nächsten Schritt ohnehin von selbst)
+    # Hole alle offenen Leads pfeilschnell aus der Datenbank
+    res = supabase.table("leads").select("*").eq("status", "offen").order("created_at", desc=True).execute()
+    offene_leads = res.data if res.data else []
 
-    for mail in st.session_state.posteingang:
-        if not isinstance(mail, dict): continue
+    if not offene_leads:
+        st.info("🎉 Postfach ist leer. Der Worker hat alles im Griff!")
+    else:
+        for lead in offene_leads:
+            kat = lead.get('kategorie', 'Unbekannt')
+            badge = "🔥 Top-Käufer" if kat == "A" else "⚠️ Dokumente fehlen"
             
-        m_id = mail.get('id', 'unbekannt')
-        ist_offen = m_id in st.session_state.entwuerfe
-        badge = f" | {mail['qualifizierung'].get('label', '')}" if "qualifizierung" in mail else ""
-            
-        with st.expander(f"✉️ {mail.get('betreff', 'Kein Betreff')}{badge}", expanded=ist_offen):
-            if "qualifizierung" in mail: st.info(f"**🧠 KI-Analyse:** {mail['qualifizierung'].get('begruendung', '')}")
-            st.write(f"**Von:** {mail.get('absender', 'Unbekannt')}")
-            st.write(f"**Nachricht:** {mail.get('text', '')}")
-            
-            if m_id in st.session_state.entwuerfe:
-                entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.entwuerfe[m_id], height=150, key=f"txt_{m_id}")
+            with st.expander(f"✉️ {lead.get('betreff')} | {badge}", expanded=True):
+                st.info(f"**🧠 KI-Analyse:** {lead.get('begruendung', '')}")
+                st.write(f"**Von:** {lead.get('absender')}")
+                st.write(f"**Nachricht:** {lead.get('nachricht')}")
                 
-                if st.button("🚀 Senden & im CRM loggen", type="primary", key=f"snd_{m_id}"):
-                    with st.spinner("Sende E-Mail..."):
-                        match = re.search(r'[\w\.-]+@[\w\.-]+', mail.get('absender', ''))
-                        if match:
-                            erfolg, fehlermeldung = sende_email(match.group(0), f"Re: {mail.get('betreff', '')}", entwurf)
-                            if erfolg:
-                                st.success("✅ E-Mail wurde erfolgreich versendet!")
-                                st.session_state.stats["mails"] += 1
-                                markiere_als_beantwortet(m_id)
-                                st.session_state.verarbeitete_ids.add(m_id)
-                                del st.session_state.entwuerfe[m_id]
-                                st.rerun()
-                            else:
-                                st.error(f"Fehler beim Senden: {fehlermeldung}")
+                # Entwurf bearbeiten
+                key = f"txt_{lead['id']}"
+                if key not in st.session_state.edits:
+                    st.session_state.edits[key] = lead.get('ki_entwurf', '')
+                
+                entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.edits[key], height=150, key=key)
+                
+                if st.button("🚀 Senden & im CRM loggen", type="primary", key=f"snd_{lead['id']}"):
+                    match = re.search(r'[\w\.-]+@[\w\.-]+', lead.get('absender', ''))
+                    if match:
+                        erfolg, fehlermeldung = sende_email(match.group(0), f"Re: {lead.get('betreff')}", entwurf, firmenname=firma)
+                        if erfolg:
+                            st.success("✅ Versendet im HTML-Premium Design!")
+                            # Lead in der Datenbank als erledigt markieren
+                            supabase.table("leads").update({"status": "beantwortet"}).eq("id", lead['id']).execute()
+                            st.session_state.stats["mails"] += 1
+                            st.rerun()
                         else:
-                            st.error("Konnte keine gültige E-Mail-Adresse finden.")
+                            st.error(f"Fehler: {fehlermeldung}")
+
+    # Wenn Live-Radar an ist, lädt die Seite alle 10 Sekunden neu und zieht frische Daten aus der DB
+    if st.session_state.get("live_sync", False):
+        time.sleep(10)
+        st.rerun()
 
 elif st.session_state.aktive_seite == "Extraktion":
-    # (Restlicher Code für die anderen Seiten)
     st.title("📑 Strukturierte Objektdaten-Extraktion")
     ziele = st.text_input("Ziel-Attribute:", "Adresse, Kaufpreis, Wohnfläche, Zimmeranzahl, Baujahr")
     upload = st.file_uploader("PDF hochladen", type="pdf")
@@ -285,7 +208,3 @@ elif st.session_state.aktive_seite == "Settings":
             supabase.table("tenants").update({"google_sheet_url": neue}).eq("user_id", st.session_state.user.id).execute()
             st.session_state.tenant_data['google_sheet_url'] = neue
             st.success("Gespeichert!")
-
-if st.session_state.get("live_sync", False) and st.session_state.aktive_seite == "Email":
-    time.sleep(10)
-    st.rerun()
