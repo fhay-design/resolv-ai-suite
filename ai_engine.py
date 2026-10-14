@@ -1,114 +1,166 @@
 import os
-import base64
 import json
+import base64
+import tempfile
+import re
+from dotenv import load_dotenv
 from groq import Groq
 import chromadb
-from dotenv import load_dotenv
 
+# --- 1. ZUGANGSDATEN KUGELSICHER LADEN ---
 load_dotenv()
-api_key = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if not api_key:
-    print("🚨 Warnung: Kein GROQ_API_KEY gefunden!")
-
-client = Groq(api_key=api_key)
-
-def get_tenant_collection(tenant_id):
-    db = chromadb.PersistentClient(path="./chroma_db")
-    safe_tenant_id = str(tenant_id).replace("-", "")
-    return db.get_or_create_collection(name=f"tenant_{safe_tenant_id}")
-
-def transkribiere_audio(audio_bytes):
-    if not audio_bytes: return ""
+if not GROQ_API_KEY:
     try:
-        completion = client.audio.transcriptions.create(
-            file=("audio.wav", audio_bytes),
-            model="whisper-large-v3",
-            response_format="text",
-            language="de"
-        )
-        return completion
-    except Exception as e:
-        return f"🚨 Fehler bei der Audio-Erkennung: {e}"
+        import streamlit as st
+        GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
+    except Exception:
+        pass
 
-def analysiere_bild(image_bytes, prompt_typ="immo_details"):
-    if not image_bytes: return ""
+if not GROQ_API_KEY:
+    print("🚨 FEHLER: GROQ_API_KEY fehlt! Bitte in die .env eintragen.")
+
+# Initialisiere Clients
+groq_client = Groq(api_key=GROQ_API_KEY)
+chroma_client = chromadb.PersistentClient(path="./vector_db")
+
+def get_tenant_collection(user_id):
+    return chroma_client.get_or_create_collection(name=f"tenant_{user_id}")
+
+
+# --- 2. SICHERHEITS-ROUTER & FALLBACKS ---
+
+def parse_json_safely(text):
+    """Fängt halluzinierte Markdown-Blöcke ab und extrahiert nur das saubere JSON."""
     try:
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        user_prompt = "Analysiere dieses Immobilienfoto. Nenne AUSSCHLIESSLICH Merkmale, die auf dem Bild zweifelsfrei sichtbar sind. Erfinde KEINE Räume oder Zustände, die verdeckt sind. Gib eine stichpunktartige Liste sichtbarer Fakten zurück."
+        return json.loads(text)
+    except:
+        # Sucht mit Regex nach allem, was zwischen geschweiften Klammern steht
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except:
+                pass
+    return {"kategorie": "B", "begruendung": "System-Fallback: KI hat ungültiges Format geliefert."}
 
-        # Hinweis: Sollte dieses Vision-Modell später auch 404 werfen, müssen wir es anpassen.
-        response = client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview",
-            messages=[
-                {"role": "user", "content": [
-                    {"type": "text", "text": user_prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]}
-            ],
-            temperature=0.1, max_tokens=800
+
+def call_llm_with_fallback(messages, mode, response_format=None, temperature=0.1):
+    """Der unsichtbare Router: Mit den EXAKTEN Modell-Namen von Groq."""
+    
+    # Standard-Setup für E-Mails (Große Modelle)
+    primary_model = "openai/gpt-oss-120b"
+    fallback_model = "qwen/qwen3.8-27b"
+    
+    # Für schnelle Analyse-Aufgaben
+    if mode in ["extract", "qualify"]:
+        primary_model = "openai/gpt-oss-20b"
+        fallback_model = "qwen/qwen3.8-27b"
+
+    try:
+        # Versuch 1: Hauptmodell
+        response = groq_client.chat.completions.create(
+            model=primary_model,
+            messages=messages,
+            response_format=response_format,
+            temperature=temperature
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"🚨 Bild-Analysefehler: {e}"
+        print(f"⚠️ Warnung: Hauptmodell ({primary_model}) blockiert. Wechsle zu Fallback ({fallback_model})...")
+        try:
+            # Versuch 2: Reserve-Modell
+            response = groq_client.chat.completions.create(
+                model=fallback_model,
+                messages=messages,
+                response_format=response_format,
+                temperature=temperature
+            )
+            return response.choices[0].message.content
+        except Exception as e2:
+            print(f"🚨 KRITISCHER FEHLER: Provider-Totalausfall. {e2}")
+            raise e2
 
-def qualifiziere_lead(email_text):
-    """Scannt Mails und kategorisiert sie als A, B oder C-Lead für Makler."""
-    if not email_text: return None
+
+# --- 3. KERNFUNKTIONEN ---
+
+def qualifiziere_lead(text):
+    sys_prompt = (
+        "Du bist ein Immobilien-Assistent. Analysiere die E-Mail des Kunden. "
+        "Klassifiziere in A (Top-Lead, z.B. Barzahler, Chefarzt, sehr seriös), "
+        "B (Normal, braucht Infos) oder C (Spam, Jobcenter, absurd). "
+        "Antworte AUSSCHLIESSLICH im JSON-Format: {\"kategorie\": \"A\", \"begruendung\": \"kurzer Text\"}"
+    )
     try:
-        system_prompt = (
-            "Du bist ein analytischer Immobilien-Lead-Filter. Bewerte diese Anfrage strikt:\n"
-            "- A-Lead: Finanzierung/Eigenkapital ist geklärt, hohe Bonität (z.B. Ärzte, Beamte, gutverdiener), sehr seriös.\n"
-            "- B-Lead: Potenzial vorhanden, aber wichtige Infos (Gehaltsnachweis) fehlen oder Tiere sind dabei.\n"
-            "- C-Lead: Unseriös, Spam, 'letzte Preis', extrem kurze Sätze.\n\n"
-            "Antworte AUSSCHLIESSLICH in diesem exakten JSON-Format (nichts anderes!):\n"
-            "{\"kategorie\": \"A\", \"label\": \"🟢 A-Lead\", \"begruendung\": \"Sehr hohe Bonität durch...\"}"
+        raw_response = call_llm_with_fallback(
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": text}
+            ],
+            mode="qualify",
+            response_format={"type": "json_object"}
         )
-        # HIER IST DER FIX: Wir nutzen das ausgelesene, verifizierte Qwen-Modell
-        res = client.chat.completions.create(
+        return parse_json_safely(raw_response)
+    except Exception as e:
+        print("🛡️ Fallback aktiviert: Lead wurde unqualifiziert als B gespeichert.")
+        return {"kategorie": "B", "begruendung": "System-Fallback nach KI-Totalausfall."}
+
+
+def generiere_antwort(prompt, mode="email"):
+    fmt = {"type": "json_object"} if mode == "extract" else None
+    sys_prompt = "Du bist ein professioneller Immobilien-Assistent für RESOLV.AI."
+    if mode == "extract": 
+        sys_prompt += " Antworte AUSSCHLIESSLICH im gültigen JSON-Format."
+        
+    try:
+        return call_llm_with_fallback(
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            mode=mode,
+            response_format=fmt,
+            temperature=0.3
+        )
+    except Exception as e:
+        return "Entwurf konnte aufgrund eines temporären Provider-Ausfalls nicht generiert werden. Bitte manuell antworten."
+
+
+def analysiere_bild(image_bytes):
+    try:
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        response = groq_client.chat.completions.create(
             model="qwen/qwen3.8-27b",
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": email_text}
-            ],
-            temperature=0.1, max_tokens=200
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Beschreibe dieses Immobilienfoto professionell in 3 Sätzen für ein Exposé."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ]
         )
-        raw = res.choices[0].message.content
-        clean_json = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_json)
+        return response.choices[0].message.content
     except Exception as e:
-        return {"kategorie": "B", "label": "⚪ Unbekannt", "begruendung": f"Fehler: {e}"}
+        return f"Bildanalyse fehlgeschlagen: {e}"
 
-def generiere_antwort(prompt, kontext="", history=None, mode="chat"):
-    if history is None: history = []
-    fallback_chain = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
-    
-    if mode == "email":
-        system_prompt = "Du bist ein Immobilien-Assistent auf Enterprise-Niveau. Beantworte Kundenanfragen präzise, höflich und verbindlich. Nutze keine Markdown-Sternchen."
-        temp = 0.2
-    elif mode == "extract":
-        system_prompt = "Du bist ein Enterprise-Datenextraktor. Extrahiere Objektmerkmale in valides JSON."
-        temp = 0.0
-    elif mode == "expose":
-        system_prompt = "Du bist ein elitärer Immobilien-Copywriter. Schreibe Exposés. STRIKTE REGEL: Nutze AUSSCHLIESSLICH belegte Fakten. Erfinde nichts."
-        temp = 0.3
-    elif mode == "video_script":
-        system_prompt = "Du bist ein Social-Media-Producer. Schreibe ein 45-Sekunden-Skript. Erwähne nur belegte Fakten."
-        temp = 0.4
-    else:
-        system_prompt = "Du bist RESOLV.AI Core. Ein präziser B2B-Berater."
-        temp = 0.4
-        
-    if kontext: system_prompt += f"\n\nObjekt- und Firmenwissen:\n{kontext}"
 
-    messages = [{"role": "system", "content": system_prompt}]
-    for msg in history[-5:]: messages.append(msg)
-    messages.append({"role": "user", "content": prompt})
-
-    for model in fallback_chain:
-        try:
-            res = client.chat.completions.create(model=model, messages=messages, temperature=temp, max_tokens=2500)
-            return res.choices[0].message.content.replace("**", "") if mode == "email" else res.choices[0].message.content
-        except Exception:
-            continue
-    return "🚨 Systemausfall."
+def transkribiere_audio(audio_bytes):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+            
+        with open(tmp_path, "rb") as f:
+            transcription = groq_client.audio.transcriptions.create(
+                file=(tmp_path, f.read()),
+                model="whisper-large-v3-turbo",
+                language="de"
+            )
+            
+        os.remove(tmp_path)
+        return transcription.text
+    except Exception as e:
+        return f"Audio-Transkription fehlgeschlagen: {e}"

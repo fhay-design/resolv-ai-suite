@@ -2,21 +2,27 @@ import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+# 1. Versuch: Lade lokale Passwörter aus der .env Datei (für den Worker im Terminal)
 load_dotenv()
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_KEY")
+# 2. Fallback: Wenn lokal nichts da ist, nimm die Cloud-Secrets (für Streamlit)
+if not url or not key:
+    import streamlit as st
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
 
-# Hier baut sich die Brücke zu deiner neuen Datenbank
+# Erstelle die finale Verbindung
 supabase: Client = create_client(url, key)
 
+# Hilfsfunktion für das Dashboard
 def get_tenant_info(user_id):
-    """Holt die Firmendaten (wie die Google Sheet URL) des eingeloggten Nutzers."""
     try:
-        response = supabase.table('tenants').select('*').eq('user_id', user_id).execute()
-        if response.data:
-            return response.data[0]
+        res = supabase.table("tenants").select("*").eq("user_id", user_id).limit(1).execute()
+        if res.data:
+            return res.data[0]
         return None
     except Exception as e:
-        print(f"Fehler beim Laden der Tenant-Daten: {e}")
+        print(f"Fehler beim Abrufen der Tenant-Info: {e}")
         return None

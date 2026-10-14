@@ -19,7 +19,6 @@ if "tenant_data" not in st.session_state: st.session_state.tenant_data = None
 if "aktive_seite" not in st.session_state: st.session_state.aktive_seite = "Dashboard"
 if "extrahierte_daten" not in st.session_state: st.session_state.extrahierte_daten = None
 if "stats" not in st.session_state: st.session_state.stats = {"mails": 0, "extraktionen": 0, "content": 0}
-if "edits" not in st.session_state: st.session_state.edits = {}
 
 # --- 2. LOGIN & REGISTRIERUNG ---
 if not st.session_state.logged_in:
@@ -40,7 +39,8 @@ if not st.session_state.logged_in:
                         st.session_state.tenant_data = get_tenant_info(res.user.id)
                         st.session_state.logged_in = True
                         st.rerun()
-                    except Exception: st.error("Login fehlgeschlagen.")
+                    except Exception: 
+                        st.error("Login fehlgeschlagen.")
                         
         with tab2:
             with st.form("register_form"):
@@ -53,7 +53,8 @@ if not st.session_state.logged_in:
                         if res.user:
                             supabase.table("tenants").insert({"user_id": res.user.id, "company_name": reg_firma, "google_sheet_url": "" }).execute()
                             st.success("Account erstellt!")
-                    except Exception as e: st.error(f"Fehler: {e}")
+                    except Exception as e: 
+                        st.error(f"Fehler: {e}")
     st.stop()
 
 user_collection = get_tenant_collection(st.session_state.user.id)
@@ -91,7 +92,6 @@ if st.session_state.aktive_seite == "Dashboard":
     c5.metric("ROI", f"{eingesparte_zeit} Min.")
 
 elif st.session_state.aktive_seite == "Email":
-    # DAS IST DIE NEUE, SCHNELLE UI OHNE LADEZEITEN
     st.title("📧 Speed-to-Lead Postfach")
     st.write("Die KI qualifiziert im Hintergrund (24/7). Hier siehst du nur die wertvollen Leads, die deine Freigabe brauchen.")
     
@@ -100,7 +100,7 @@ elif st.session_state.aktive_seite == "Email":
         live_radar = st.toggle("📡 Live-Radar", value=st.session_state.get("live_sync", False))
         st.session_state.live_sync = live_radar
 
-    # Hole alle offenen Leads pfeilschnell aus der Datenbank
+    # Hole alle offenen Leads aus der Datenbank
     res = supabase.table("leads").select("*").eq("status", "offen").order("created_at", desc=True).execute()
     offene_leads = res.data if res.data else []
 
@@ -118,25 +118,30 @@ elif st.session_state.aktive_seite == "Email":
                 
                 # Entwurf bearbeiten
                 key = f"txt_{lead['id']}"
-                if key not in st.session_state.edits:
-                    st.session_state.edits[key] = lead.get('ki_entwurf', '')
+                if key not in st.session_state:
+                    st.session_state[key] = lead.get('ki_entwurf', '')
                 
-                entwurf = st.text_area("Vorbereitete KI-Antwort:", value=st.session_state.edits[key], height=150, key=key)
+                entwurf = st.text_area("Vorbereitete KI-Antwort:", height=150, key=key)
                 
                 if st.button("🚀 Senden & im CRM loggen", type="primary", key=f"snd_{lead['id']}"):
                     match = re.search(r'[\w\.-]+@[\w\.-]+', lead.get('absender', ''))
                     if match:
-                        erfolg, fehlermeldung = sende_email(match.group(0), f"Re: {lead.get('betreff')}", entwurf, firmenname=firma)
+                        ziel_email = match.group(0)
+                        aktueller_entwurf = st.session_state[key] # Nimmt sicher den bearbeiteten Text
+                        erfolg, fehlermeldung = sende_email(ziel_email, f"Re: {lead.get('betreff')}", aktueller_entwurf, firmenname=firma)
+                        
                         if erfolg:
                             st.success("✅ Versendet im HTML-Premium Design!")
                             # Lead in der Datenbank als erledigt markieren
                             supabase.table("leads").update({"status": "beantwortet"}).eq("id", lead['id']).execute()
                             st.session_state.stats["mails"] += 1
+                            time.sleep(1) # Kurzer Puffer für die Erfolgsmeldung
                             st.rerun()
                         else:
-                            st.error(f"Fehler: {fehlermeldung}")
+                            st.error(f"🚨 Fehler beim Senden: {fehlermeldung}")
+                    else:
+                        st.error("🚨 Keine gültige E-Mail-Adresse im Absender gefunden!")
 
-    # Wenn Live-Radar an ist, lädt die Seite alle 10 Sekunden neu und zieht frische Daten aus der DB
     if st.session_state.get("live_sync", False):
         time.sleep(10)
         st.rerun()
@@ -154,7 +159,8 @@ elif st.session_state.aktive_seite == "Extraktion":
                 df = pd.DataFrame(json.loads(raw.replace("```json", "").replace("```", "").strip()) if isinstance(json.loads(raw.replace("```json", "").replace("```", "").strip()), list) else [json.loads(raw.replace("```json", "").replace("```", "").strip())])
                 st.session_state.extrahierte_daten = df
                 st.session_state.stats["extraktionen"] += 1
-            except Exception as e: st.error(f"Fehler: {e}")
+            except Exception as e: 
+                st.error(f"Fehler: {e}")
             
     if st.session_state.extrahierte_daten is not None:
         st.dataframe(st.session_state.extrahierte_daten, use_container_width=True)

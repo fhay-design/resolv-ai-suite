@@ -2,11 +2,14 @@ import time
 import os
 import re
 from dotenv import load_dotenv
+
+# 1. ZUERST die Umgebungsvariablen (.env) laden, BEVOR irgendetwas anderes passiert!
+load_dotenv()
+
+# 2. DANACH erst die eigenen Module laden, die diese Passwörter benötigen
 from database import supabase
 from email_agent import lese_emails, sende_email, loesche_email, markiere_als_beantwortet
 from ai_engine import qualifiziere_lead, generiere_antwort
-
-load_dotenv()
 
 print("🚀 RESOLV.AI Worker bootet. Initialisiere 24/7 Matrix...")
 

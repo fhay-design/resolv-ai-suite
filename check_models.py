@@ -1,18 +1,17 @@
 import os
-from groq import Groq
 from dotenv import load_dotenv
+from groq import Groq
 
+# Lade deinen API Key aus der .env
 load_dotenv()
-api_key = os.getenv("GROQ_API_KEY")
 
-if not api_key:
-    print("🚨 Kein API Key gefunden!")
-else:
-    client = Groq(api_key=api_key)
-    print("🟢 Aktuell verfügbare Groq Modelle:")
-    try:
-        modelle = client.models.list()
-        for m in modelle.data:
-            print(f"- {m.id}")
-    except Exception as e:
-        print(f"Fehler beim Abrufen: {e}")
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+print("🔍 Frage Groq Server ab...")
+try:
+    models = client.models.list()
+    print("\n✅ Aktuell verfügbare Modelle:")
+    for model in models.data:
+        print(f" - {model.id}")
+except Exception as e:
+    print(f"🚨 Fehler bei der Abfrage: {e}")

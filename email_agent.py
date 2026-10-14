@@ -1,123 +1,130 @@
+import os
 import imaplib
-import smtplib
 import email
 from email.header import decode_header
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import os
-import streamlit as st
 from dotenv import load_dotenv
 
+# --- 1. ZUGANGSDATEN KUGELSICHER LADEN ---
 load_dotenv()
 
-def hole_zugangsdaten(schluessel, default=None):
+# Wir checken verschiedene mögliche Namen, egal wie du sie in der .env genannt hast
+EMAIL_USER = os.getenv("EMAIL_USER") or os.getenv("EMAIL_ADRESSE")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD") or os.getenv("EMAIL_PASSWORT")
+IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+
+# Fallback für die Cloud (Streamlit Dashboard)
+if not EMAIL_USER or not EMAIL_PASSWORD:
     try:
-        return st.secrets[schluessel]
-    except:
-        return os.getenv(schluessel, default)
+        import streamlit as st
+        EMAIL_USER = st.secrets.get("EMAIL_USER") or st.secrets.get("EMAIL_ADRESSE")
+        EMAIL_PASSWORD = st.secrets.get("EMAIL_PASSWORD") or st.secrets.get("EMAIL_PASSWORT")
+        IMAP_SERVER = st.secrets.get("IMAP_SERVER", "imap.gmail.com")
+        SMTP_SERVER = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
+    except Exception:
+        pass
 
-IMAP_SERVER = hole_zugangsdaten("IMAP_SERVER", "imap.gmail.com")
-SMTP_SERVER = hole_zugangsdaten("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(hole_zugangsdaten("SMTP_PORT", 587))
-EMAIL_ACCOUNT = hole_zugangsdaten("EMAIL_ACCOUNT")
-EMAIL_PASSWORD = hole_zugangsdaten("EMAIL_PASSWORD")
+if not EMAIL_USER or not EMAIL_PASSWORD:
+    print("🚨 FEHLER: E-Mail Zugangsdaten fehlen! Bitte in der .env Datei eintragen.")
 
-def lese_emails(limit=5):
-    if not EMAIL_ACCOUNT or not EMAIL_PASSWORD:
-        return "🚨 Fehler: Zugangsdaten fehlen!"
-        
+# --- 2. VERBINDUNGS-MOTOR ---
+def verbinde_imap():
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        mail.select("inbox")
+        mail.login(EMAIL_USER, EMAIL_PASSWORD)
+        return mail
+    except Exception as e:
+        print(f"🚨 IMAP Verbindungsfehler: {e}")
+        return None
+
+# --- 3. KERNFUNKTIONEN FÜR RESOLV.AI ---
+def lese_emails(limit=5):
+    mail = verbinde_imap()
+    if not mail: return "Verbindungsfehler"
+    
+    mail.select("inbox")
+    status, messages = mail.search(None, "UNSEEN")
+    
+    if status != "OK":
+        return []
         
-        # FIX: Wir suchen wieder auf "ALL", damit Gmail uns keine Selbstgespräch-Mails verheimlicht.
-        status, messages = mail.search(None, "ALL")
-        if status != "OK": return []
-            
-        email_ids = messages[0].split()
-        latest_ids = email_ids[-limit:]
-        latest_ids.reverse()
-        
-        posteingang = []
-        for m_id in latest_ids:
-            res, msg_data = mail.fetch(m_id, "(RFC822)")
+    mail_ids = messages[0].split()
+    emails_data = []
+    
+    for num in mail_ids[-limit:]:
+        status, msg_data = mail.fetch(num, "(RFC822)")
+        if status == "OK":
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding if encoding else "utf-8", errors='ignore')
+                    # Betreff sauber entschlüsseln
+                    betreff_raw, encoding = decode_header(msg["Subject"])[0]
+                    if isinstance(betreff_raw, bytes):
+                        betreff = betreff_raw.decode(encoding if encoding else "utf-8")
+                    else:
+                        betreff = betreff_raw
                         
-                    from_ = str(msg.get("From"))
+                    absender = msg.get("From")
                     
-                    from_lower = from_.lower()
-                    bots = ["noreply", "no-reply", "daemon", "postmaster", "mailer", "system", "support"]
-                    if any(b in from_lower for b in bots):
-                        continue 
-                    
+                    # Nachrichtentext auslesen
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
                                 try:
-                                    body = part.get_payload(decode=True).decode(errors='ignore')
+                                    body = part.get_payload(decode=True).decode()
                                     break
-                                except: pass
+                                except:
+                                    pass
                     else:
-                        try: body = msg.get_payload(decode=True).decode(errors='ignore')
-                        except: body = msg.get_payload()
+                        try:
+                            body = msg.get_payload(decode=True).decode()
+                        except:
+                            pass
                             
-                    posteingang.append({
-                        "id": m_id.decode("utf-8"),
-                        "absender": from_,
-                        "betreff": str(subject),
-                        "text": str(body).strip()[:1500]
+                    emails_data.append({
+                        "id": num.decode(),
+                        "betreff": betreff,
+                        "absender": absender,
+                        "text": body
                     })
-        mail.logout()
-        return posteingang
-    except Exception as e:
-        return f"🚨 IMAP Verbindungsfehler: {e}"
+    mail.logout()
+    return emails_data
 
-def sende_email(empfaenger, betreff, text):
-    if not EMAIL_ACCOUNT or not EMAIL_PASSWORD: return False, "Keine Zugangsdaten"
+def markiere_als_beantwortet(mail_id):
+    mail = verbinde_imap()
+    if not mail: return
+    mail.select("inbox")
+    mail.store(mail_id.encode(), '+FLAGS', '\\Answered')
+    mail.store(mail_id.encode(), '+FLAGS', '\\Seen')
+    mail.logout()
+
+def loesche_email(mail_id):
+    mail = verbinde_imap()
+    if not mail: return
+    mail.select("inbox")
+    mail.store(mail_id.encode(), '+FLAGS', '\\Deleted')
+    mail.expunge()
+    mail.logout()
+
+def sende_email(empfaenger, betreff, nachricht_text, firmenname="RESOLV.AI"):
     try:
         msg = MIMEMultipart()
-        msg['From'] = EMAIL_ACCOUNT
+        msg['From'] = f"{firmenname} <{EMAIL_USER}>"
         msg['To'] = empfaenger
         msg['Subject'] = betreff
-        msg.attach(MIMEText(text, 'plain'))
+        msg.attach(MIMEText(nachricht_text, 'plain'))
         
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server = smtplib.SMTP(SMTP_SERVER, 587)
         server.starttls()
-        server.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
-        return True, "Gesendet"
+        return True, ""
     except Exception as e:
+        print(f"🚨 SMTP Fehler beim Senden: {e}")
         return False, str(e)
-
-def loesche_email(mail_id_str):
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        mail.select("inbox")
-        try:
-            mail.store(mail_id_str.encode('utf-8'), '+X-GM-LABELS', '\\Spam')
-        except: pass
-        mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Deleted')
-        mail.expunge()
-        mail.logout()
-        return True
-    except: return False
-
-def markiere_als_beantwortet(mail_id_str):
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        mail.select("inbox")
-        mail.store(mail_id_str.encode('utf-8'), '+FLAGS', '\\Answered')
-        mail.logout()
-        return True
-    except: return False
