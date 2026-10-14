@@ -32,11 +32,9 @@ def get_tenant_collection(user_id):
 # --- 2. SICHERHEITS-ROUTER & FALLBACKS ---
 
 def parse_json_safely(text):
-    """Fängt halluzinierte Markdown-Blöcke ab und extrahiert nur das saubere JSON."""
     try:
         return json.loads(text)
     except:
-        # Sucht mit Regex nach allem, was zwischen geschweiften Klammern steht
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             try:
@@ -47,19 +45,14 @@ def parse_json_safely(text):
 
 
 def call_llm_with_fallback(messages, mode, response_format=None, temperature=0.1):
-    """Der unsichtbare Router: Mit den EXAKTEN Modell-Namen von Groq."""
-    
-    # Standard-Setup für E-Mails (Große Modelle)
     primary_model = "openai/gpt-oss-120b"
     fallback_model = "qwen/qwen3.8-27b"
     
-    # Für schnelle Analyse-Aufgaben
     if mode in ["extract", "qualify"]:
         primary_model = "openai/gpt-oss-20b"
         fallback_model = "qwen/qwen3.8-27b"
 
     try:
-        # Versuch 1: Hauptmodell
         response = groq_client.chat.completions.create(
             model=primary_model,
             messages=messages,
@@ -70,7 +63,6 @@ def call_llm_with_fallback(messages, mode, response_format=None, temperature=0.1
     except Exception as e:
         print(f"⚠️ Warnung: Hauptmodell ({primary_model}) blockiert. Wechsle zu Fallback ({fallback_model})...")
         try:
-            # Versuch 2: Reserve-Modell
             response = groq_client.chat.completions.create(
                 model=fallback_model,
                 messages=messages,
@@ -109,7 +101,16 @@ def qualifiziere_lead(text):
 
 def generiere_antwort(prompt, mode="email"):
     fmt = {"type": "json_object"} if mode == "extract" else None
-    sys_prompt = "Du bist ein professioneller Immobilien-Assistent für RESOLV.AI."
+    
+    # NEUER SYSTEM PROMPT: Absolute Regel gegen Termin-Halluzinationen
+    sys_prompt = (
+        "Du bist ein professioneller Immobilien-Assistent für RESOLV.AI. "
+        "WICHTIGSTE REGEL FÜR E-MAILS: Erfinde NIEMALS konkrete Termine, Tage oder Uhrzeiten für Besichtigungen! "
+        "Erkläre dem Kunden stattdessen immer sehr höflich, dass er sich über den untenstehenden Buchungs-Link "
+        "ganz bequem selbst einen passenden Termin im Kalender des Maklers aussuchen kann. "
+        "Setze keine Platzhalter wie [Link hier] in den Text, der Link wird vom System automatisch am Ende angehängt."
+    )
+    
     if mode == "extract": 
         sys_prompt += " Antworte AUSSCHLIESSLICH im gültigen JSON-Format."
         
