@@ -3,18 +3,16 @@ import os
 import re
 from dotenv import load_dotenv
 
-# 1. ZUERST die Umgebungsvariablen (.env) laden, BEVOR irgendetwas anderes passiert!
 load_dotenv()
 
-# 2. DANACH erst die eigenen Module laden, die diese Passwörter benötigen
 from database import supabase
 from email_agent import lese_emails, sende_email, loesche_email, markiere_als_beantwortet
-from ai_engine import qualifiziere_lead, generiere_antwort
+# HIER ist der neue Import für die Datenbank-Suche
+from ai_engine import qualifiziere_lead, generiere_antwort, hole_objekt_kontext 
 
 print("🚀 RESOLV.AI Worker bootet. Initialisiere 24/7 Matrix...")
 
 def run_worker():
-    # Hole deinen Makler-Account aus der Datenbank
     res = supabase.table("tenants").select("user_id", "company_name").limit(1).execute()
     if not res.data:
         print("🚨 Kein Account gefunden. Bitte logge dich erst einmal im Dashboard ein!")
@@ -32,13 +30,28 @@ def run_worker():
             print(f"⚠️ {mails}")
         elif mails:
             for mail in mails:
-                # Sicherheits-Check: Haben wir diese Mail schon in der Datenbank?
                 check = supabase.table("leads").select("id").eq("mail_id", mail['id']).execute()
                 if check.data:
                     continue 
                     
-                print(f"\n📬 Neue Anfrage detektiert: {mail['betreff']}")
-                print("🧠 KI qualifiziert den Lead...")
+                print(f"\n📬 Neue Nachricht detektiert: {mail['betreff']}")
+                
+                print("🛡️ Türsteher prüft Relevanz...")
+                router_prompt = (
+                    "Du bist ein strenger Filter für ein Maklerbüro. Prüfe diese E-Mail. "
+                    "Handelt es sich um eine konkrete Immobilien-Anfrage eines Interessenten (Kauf, Miete, Besichtigung)? "
+                    "Antworte AUSSCHLIESSLICH mit dem Wort JA oder NEIN. Keine Begründung.\n\n"
+                    f"Betreff: {mail['betreff']}\nNachricht: {mail['text'][:1000]}"
+                )
+                
+                router_entscheidung = generiere_antwort(router_prompt, mode="email").strip().upper()
+                
+                if "JA" not in router_entscheidung or "NEIN" in router_entscheidung:
+                    print("🛑 Irrelevante E-Mail (Spam/Newsletter/Intern) erkannt. Wird ignoriert.")
+                    markiere_als_beantwortet(mail['id'])
+                    continue
+                    
+                print("🧠 Ist ein Lead! KI qualifiziert...")
                 
                 q = qualifiziere_lead(mail['text'])
                 if not q: continue
@@ -62,7 +75,6 @@ def run_worker():
                         
                     loesche_email(mail['id'])
                     
-                    # Für die Statistik in die Datenbank schreiben
                     supabase.table("leads").insert({
                         "tenant_id": tenant_id,
                         "mail_id": mail['id'],
@@ -77,19 +89,32 @@ def run_worker():
                     
                 else:
                     print(f"⭐ {kat}-Lead detektiert! Generiere Premium-Antwort...")
+                    
+                    # --- HIER IST DER MAGISCHE RAG-MOMENT ---
+                    print("🔍 Durchsuche Objekt-Datenbank nach relevanten Fakten...")
+                    kontext = hole_objekt_kontext(f"{mail['betreff']} {mail['text']}", tenant_id)
+                    
+                    if kontext:
+                        print("📚 Objekt-Fakten gefunden! KI wird mit Fachwissen geladen.")
+                    else:
+                        print("⚠️ Keine spezifischen Objekt-Fakten in der Datenbank gefunden.")
+
                     if kat == "A":
                         anweisung = (
-                            "Top-Lead. Bedanke dich extrem freundlich für die Anfrage und das starke Profil. "
-                            "Erfinde keine Anhänge. Schlage zwei konkrete Termine nächste Woche vor. "
+                            "Top-Lead. Bedanke dich extrem freundlich für die Anfrage. "
+                            "Verweise höflich auf den untenstehenden Link zur Buchung eines Besichtigungstermins. "
                             f"Beende STRIKT mit 'Mit freundlichen Grüßen, Ihr Team von {firma}'"
                         )
                     else:
                         anweisung = (
-                            "Bedanke dich für das Interesse, fordere aber höflich eine Vorab-Selbstauskunft an. "
+                            "Bedanke dich für das Interesse. Gehe auf die Fakten des Objekts ein, falls relevant. "
+                            "Fordere höflich eine Vorab-Selbstauskunft an, bevor ein Termin gebucht werden kann. "
                             f"Beende STRIKT mit 'Mit freundlichen Grüßen, Ihr Team von {firma}'"
                         )
-                        
-                    entwurf = generiere_antwort(f"ANWEISUNG: {anweisung}\n\nKundenmail: {mail['text']}", mode="email")
+                    
+                    # Der Kontext wird jetzt nahtlos in den Prompt injiziert
+                    voller_prompt = f"ANWEISUNG: {anweisung}\n\nOBJEKT-FAKTEN (Nutze diese Infos):\n{kontext}\n\nKundenmail: {mail['text']}"
+                    entwurf = generiere_antwort(voller_prompt, mode="email")
                     
                     supabase.table("leads").insert({
                         "tenant_id": tenant_id,
@@ -104,9 +129,8 @@ def run_worker():
                     }).execute()
                     
                     markiere_als_beantwortet(mail['id'])
-                    print("✅ Lead sicher in der Datenbank gespeichert.")
+                    print("✅ Lead sicher im CRM Dashboard gespeichert.")
         
-        # 15 Sekunden Pause, um Google nicht zu überlasten
         time.sleep(15)
 
 if __name__ == "__main__":
