@@ -120,7 +120,9 @@ def sende_email(empfaenger, betreff, nachricht_text, firmenname="RESOLV.AI"):
 
     msg = MIMEMultipart("alternative")
     msg['Subject'] = betreff
-    msg['From'] = f"{firmenname} <{EMAIL_USER}>"
+    
+    # HIER IST DER DKIM FIX: Reiner EMAIL_USER als Absender
+    msg['From'] = EMAIL_USER
     msg['To'] = empfaenger
 
     # Text formatieren (Zeilenumbrüche für HTML übersetzen)
